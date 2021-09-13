@@ -10,4 +10,18 @@ snapshots:
     sha256: 9f9fe35c949414146840a985fb228fd397c504d1781b834bfc9ab935f4d27df6
     url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/9.yaml
     size: 586923
-packages: []
+packages:
+- original:
+    hackage: Yampa-0.13.1@sha256:4612a2646c27bcd3ac55c90dbc34249303e28aa5b3bc3e0c6fa9ce58b889843c,5436
+  completed:
+    pantry-tree:
+      sha256: 2ebdfafc0143a66132e1f790fc3909c93654ee89fbe468574c5c2a36070dc6b3
+      size: 4039
+    hackage: Yampa-0.13.1@sha256:4612a2646c27bcd3ac55c90dbc34249303e28aa5b3bc3e0c6fa9ce58b889843c,5436
+- original:
+    hackage: SDL-0.6.7.0@sha256:9d6ba75c0cab575ec38468c8277803983e985f9622437aeca6a53e6a7337a7d5,2045
+  completed:
+    pantry-tree:
+      sha256: c533e2572ee2ed4d48f8f0fa60efed32ff5eb5ab618fc8f72fdfa7321d186afc
+      size: 1942
+    hackage: SDL-0.6.7.0@sha256:9d6ba75c0cab575ec38468c8277803983e985f9622437aeca6a53e6a7337a7d5,2045

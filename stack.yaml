@@ -41,6 +41,9 @@ packages:
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
 # extra-deps: []
+extra-deps:
+- Yampa-0.13.1@sha256:4612a2646c27bcd3ac55c90dbc34249303e28aa5b3bc3e0c6fa9ce58b889843c,5436
+- SDL-0.6.7.0@sha256:9d6ba75c0cab575ec38468c8277803983e985f9622437aeca6a53e6a7337a7d5,2045
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
