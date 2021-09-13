@@ -9,6 +9,7 @@ import Data.IORef
 import Data.Time.Clock
 import FRP.Yampa as Yampa
 import SDL as SDL
+import SDL.Vect
 
 runGame :: IO ()
 runGame = do
@@ -35,6 +36,8 @@ output renderer _ x = do
   events <- pollEvents
   rendererDrawColor renderer $= V4 32 32 32 255
   clear renderer
+  rendererDrawColor renderer $= V4 192 32 32 255
+  fillRect renderer (Just (Rectangle (P (V2 100 100)) (V2 20 20)))
   present renderer
   when x (putStrLn "Done")
   return x
