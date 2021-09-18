@@ -13,27 +13,35 @@ import SDL.Vect
 
 data GameState = GameState
   { finished :: Bool
+  , startTime :: UTCTime
+  , timePassed :: DTime
+  , frameNum :: Int
   }
 
 runGame :: IO ()
 runGame = do
   renderer <- initScreen
   t <- getCurrentTime
-  timeRef <- newIORef t
-  reactimate initialise (input timeRef) (output renderer) isTimeUp
+  timeRef <- newIORef (t, t)
+  reactimate initialise (input timeRef) (output renderer) process
 
 initialise :: IO GameState
 initialise = do
   putStrLn "Starting..."
-  return GameState { finished = False }
+  currTime <- getCurrentTime
+  -- let timePassed = diffUTCTime currTime (startTime gs)
+  -- putStrLn ("frameChanged: " ++ (show (frameChanged gs)) ++ ", " ++ (show timePassed))
+  return GameState { finished = False, startTime = currTime, timePassed = 0, frameNum = 0 }
 
-input :: IORef UTCTime -> Bool -> IO (DTime, Maybe GameState)
+input :: IORef (UTCTime, UTCTime) -> Bool -> IO (DTime, Maybe GameState)
 input ref _ = do
   currTime <- getCurrentTime
-  lastTime <- readIORef ref
-  writeIORef ref currTime
+  (start, lastTime) <- readIORef ref
+  writeIORef ref (start, currTime)
   let dt = diffUTCTime currTime lastTime
-  return (realToFrac dt, Nothing)
+      timePassed = realToFrac (diffUTCTime currTime start)
+      frameNum = (round (timePassed * 60)) `mod` 60
+  return (realToFrac dt, Just (GameState {finished = False, startTime = start, timePassed = timePassed, frameNum = frameNum}))
 
 output :: Renderer -> Bool -> GameState -> IO Bool
 output renderer _ gs = do
@@ -44,15 +52,18 @@ output renderer _ gs = do
   rendererDrawColor renderer $= V4 192 32 32 255
   fillRect renderer (Just (Rectangle (P (V2 100 100)) (V2 20 20)))
   present renderer
+  currTime <- getCurrentTime
+  let tp = timePassed gs
+  putStrLn ("timePassed: " ++ (show tp) ++ ", frameNum: " ++ (show $ frameNum gs))
   when (finished gs) (putStrLn "Done")
   return (finished gs)
 
-isTimeUp :: SF GameState GameState
+process :: SF GameState GameState
 -- time :: SF a Time, arr 'lifts' a regular func to SF, >>> is SF bind
-isTimeUp =
-  Yampa.time >>> arr (\t ->
-                       let isTime = t > 4
-                       in GameState { finished = isTime })
+process =
+    (arr dup) >>> (Yampa.identity *** Yampa.time) >>> arr (\(gs, t) ->
+                       let gameOver = t > 4
+                       in gs{ finished = gameOver })
 
 initScreen :: IO Renderer
 initScreen = do
