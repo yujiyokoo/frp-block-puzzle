@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE Arrows #-}
 
 module Lib
     ( runGame
@@ -13,10 +14,10 @@ import SDL.Vect
 
 data GameState = GameState
   { finished :: Bool
-  , startTime :: UTCTime
   , timePassed :: DTime
   , frameNum :: Int
   , buttonPresses :: ButtonPresses
+  , currentBlock :: PlacedBlock
   }
 
 data ButtonPresses = ButtonPresses
@@ -33,6 +34,38 @@ data ButtonPresses = ButtonPresses
 noButtonPressed :: ButtonPresses
 noButtonPressed = ButtonPresses False False False False False False False
 
+data GameScreen = GameScreen
+  { playFieldLeft :: Int
+  , playFieldTop :: Int
+  }
+
+defaultGameScreen :: GameScreen
+defaultGameScreen = GameScreen
+  { playFieldLeft = 40
+  , playFieldTop = 40
+  }
+
+data PlacedBlock = PlacedBlock
+  { blockShape :: BlockShape
+  , orientation :: BlockOrientation
+  , position :: BlockPosition
+  }
+  deriving (Show)
+
+data BlockShape
+  = O
+  | I
+  deriving (Show)
+
+data BlockOrientation
+  = LeftTilt
+  | UpsideDown
+  | RightTilt
+  | Upright
+  deriving (Show)
+
+type BlockPosition = (Int, Int)
+
 runGame :: IO ()
 runGame = do
   renderer <- initScreen
@@ -40,26 +73,19 @@ runGame = do
   timeRef <- newIORef (t, t)
   reactimate initialise (input timeRef) (output renderer) process
 
-initialise :: IO GameState
+initialise :: IO [SDL.Event]
 initialise = do
   putStrLn "Starting..."
-  currTime <- getCurrentTime
-  -- let timePassed = diffUTCTime currTime (startTime gs)
-  -- putStrLn ("frameChanged: " ++ (show (frameChanged gs)) ++ ", " ++ (show timePassed))
-  return GameState { finished = False, startTime = currTime, timePassed = 0, frameNum = 0, buttonPresses = noButtonPressed }
+  return []
 
-input :: IORef (UTCTime, UTCTime) -> Bool -> IO (DTime, Maybe GameState)
+input :: IORef (UTCTime, UTCTime) -> Bool -> IO (DTime, Maybe [SDL.Event])
 input ref _ = do
   currTime <- getCurrentTime
   (start, lastTime) <- readIORef ref
   writeIORef ref (start, currTime)
   events <- pollEvents
   let dt = diffUTCTime currTime lastTime
-      timePassed = realToFrac (diffUTCTime currTime start)
-      frameNum = (round (timePassed * 60)) `mod` 60
-      buttonPresses = buttonPressesFrom events
-      gameState = GameState {finished = False, startTime = start, timePassed = timePassed, frameNum = frameNum, buttonPresses = buttonPresses}
-  return (realToFrac dt, Just gameState)
+  return (realToFrac dt, Just events)
 
 buttonPressesFrom :: [SDL.Event] -> ButtonPresses
 buttonPressesFrom events =
@@ -96,22 +122,61 @@ output renderer _ gs = do
   clear renderer
   -- draw a red square
   rendererDrawColor renderer $= V4 192 32 32 255
-  fillRect renderer (Just (Rectangle (P (V2 100 100)) (V2 20 20)))
+  drawBlock (position (currentBlock gs)) renderer
+  drawBorders renderer
   present renderer
   currTime <- getCurrentTime
   let tp = timePassed gs
       bps = buttonPresses gs
   putStrLn ("timePassed: " ++ (show tp) ++ ", frameNum: " ++ (show $ frameNum gs))
+  putStrLn ("currentBlock: " ++ (show (currentBlock gs)))
   when (bps /= noButtonPressed) (putStrLn ("Buttons: " ++ (show $ bps)))
   when (finished gs) (putStrLn "Done")
   return (finished gs)
 
-process :: SF GameState GameState
--- time :: SF a Time, arr 'lifts' a regular func to SF, >>> is SF bind
+drawBlock :: BlockPosition -> Renderer -> IO ()
+drawBlock (x, y) renderer =
+  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+100)) (fromIntegral (y*20+100)))) (V2 20 20)))
+
+drawBorders :: Renderer -> IO ()
+drawBorders renderer =
+  let playFieldRect = Rectangle (P (V2 (fromIntegral $ playFieldLeft defaultGameScreen) (fromIntegral $ playFieldTop defaultGameScreen))) (V2 200 400)
+  in
+  drawRect renderer (Just playFieldRect)
+
+process :: SF [SDL.Event] GameState
 process =
-    (arr dup) >>> (Yampa.identity *** Yampa.time) >>> arr (\(gs, t) ->
-                       let gameOver = t > 4
-                       in gs{ finished = gameOver })
+    (Yampa.identity &&& Yampa.time) >>> arr updateGameState >>> overrideBlockPosition
+
+overrideBlockPosition :: SF GameState GameState
+overrideBlockPosition =
+  proc gameState -> do
+    -- let (x, y) = position (currentBlock gameState)
+    newY <- round ^<< integral -< (1.0 :: Float)
+    newBlock <- arr (\y -> defaultBlock { position = (0, y) }) -< newY
+    returnA -< (gameState { currentBlock = newBlock } )
+
+defaultBlock :: PlacedBlock
+defaultBlock =
+  PlacedBlock
+    { blockShape = O
+    , orientation = Upright
+    , position = (0, 0)
+    }
+
+updateGameState :: ([SDL.Event], Time) -> GameState
+updateGameState (events, t) =
+  let
+    buttonPresses = buttonPressesFrom events
+    frameNum = (round (t * 60)) `mod` 60
+  in
+    GameState
+      { finished = t > 4
+      , timePassed = t
+      , frameNum = frameNum
+      , buttonPresses = buttonPresses
+      , currentBlock = defaultBlock
+      }
 
 initScreen :: IO Renderer
 initScreen = do
