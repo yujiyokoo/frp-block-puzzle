@@ -15,14 +15,12 @@ import SDL.Vect
 data GameState = GameState
   { finished :: Bool
   , timePassed :: DTime
-  , frameNum :: Int
-  , buttonPresses :: ButtonPresses
   , currentBlock :: PlacedBlock
   }
 
 initialGameState :: GameState
 initialGameState =
-  GameState False 0 0 noButtonPressed defaultBlock
+  GameState False 0 defaultBlock
 
 data ButtonPresses = ButtonPresses
   { upArrow :: Bool
@@ -131,10 +129,7 @@ output renderer _ gs = do
   present renderer
   currTime <- getCurrentTime
   let tp = timePassed gs
-      bps = buttonPresses gs
-  putStrLn ("timePassed: " ++ (show tp) ++ ", frameNum: " ++ (show $ frameNum gs))
   putStrLn ("currentBlock: " ++ (show (currentBlock gs)))
-  -- when (bps /= noButtonPressed) (putStrLn ("Buttons: " ++ (show $ bps)))
   when (finished gs) (putStrLn "Done")
   return (finished gs)
 
@@ -152,15 +147,13 @@ process :: GameState -> SF [SDL.Event] GameState
 process initialState =
     (Yampa.identity &&& Yampa.time) >>> (setBlockPosition initialState)
 
-buildGameState :: GameState -> (BlockPosition, DTime, Int, ButtonPresses) -> GameState
-buildGameState initialState (position, t, frameNum, buttonPresses) =
+buildGameState :: GameState -> (BlockPosition, DTime) -> GameState
+buildGameState initialState (position, t) =
   let oldBlock = currentBlock initialState
       updatedBlock = oldBlock { position = position }
   in
   initialState { finished = t > 4
      , timePassed = t
-     , frameNum = frameNum
-     , buttonPresses = buttonPresses
      , currentBlock = updatedBlock
   }
 
@@ -169,16 +162,15 @@ setBlockPosition gs = switch (sf  >>> second notYet) cont
   where sf = proc (events, t) -> do
           let buttonPresses = buttonPressesFrom events
               (x, y) = position $ currentBlock gs
-              frameNum = (round (t * 60)) `mod` 60
           dy <- round ^<< integral -< (1.0 :: Float)
           newY <- arr (\(a, b) -> a + b) -< (y, dy)
-          newGameState <- arr (buildGameState gs) -< ((x, newY), t, frameNum, buttonPresses)
+          newGameState <- arr (buildGameState gs) -< ((x, newY), t)
           inputEvent <- arr (\(bps, y) -> if leftArrow bps then Yampa.Event y else Yampa.NoEvent) -< (buttonPresses, newY)
           returnA -< (newGameState, inputEvent)
         cont y =
           let
             (oldX, _) = position $ currentBlock gs
-            newGameState = buildGameState gs ((oldX - 1, y), 0, 0, noButtonPressed)
+            newGameState = buildGameState gs ((oldX - 1, y), 0)
           in
           setBlockPosition newGameState
 
