@@ -20,6 +20,10 @@ data GameState = GameState
   , currentBlock :: PlacedBlock
   }
 
+initialGameState :: GameState
+initialGameState =
+  GameState False 0 0 noButtonPressed defaultBlock
+
 data ButtonPresses = ButtonPresses
   { upArrow :: Bool
   , downArrow :: Bool
@@ -71,7 +75,7 @@ runGame = do
   renderer <- initScreen
   t <- getCurrentTime
   timeRef <- newIORef (t, t)
-  reactimate initialise (input timeRef) (output renderer) process
+  reactimate initialise (input timeRef) (output renderer) (process initialGameState)
 
 initialise :: IO [SDL.Event]
 initialise = do
@@ -130,7 +134,7 @@ output renderer _ gs = do
       bps = buttonPresses gs
   putStrLn ("timePassed: " ++ (show tp) ++ ", frameNum: " ++ (show $ frameNum gs))
   putStrLn ("currentBlock: " ++ (show (currentBlock gs)))
-  when (bps /= noButtonPressed) (putStrLn ("Buttons: " ++ (show $ bps)))
+  -- when (bps /= noButtonPressed) (putStrLn ("Buttons: " ++ (show $ bps)))
   when (finished gs) (putStrLn "Done")
   return (finished gs)
 
@@ -144,17 +148,40 @@ drawBorders renderer =
   in
   drawRect renderer (Just playFieldRect)
 
-process :: SF [SDL.Event] GameState
-process =
-    (Yampa.identity &&& Yampa.time) >>> arr updateGameState >>> overrideBlockPosition
+process :: GameState -> SF [SDL.Event] GameState
+process initialState =
+    (Yampa.identity &&& Yampa.time) >>> (setBlockPosition initialState)
 
-overrideBlockPosition :: SF GameState GameState
-overrideBlockPosition =
-  proc gameState -> do
-    -- let (x, y) = position (currentBlock gameState)
-    newY <- round ^<< integral -< (1.0 :: Float)
-    newBlock <- arr (\y -> defaultBlock { position = (0, y) }) -< newY
-    returnA -< (gameState { currentBlock = newBlock } )
+buildGameState :: GameState -> (BlockPosition, DTime, Int, ButtonPresses) -> GameState
+buildGameState initialState (position, t, frameNum, buttonPresses) =
+  let oldBlock = currentBlock initialState
+      updatedBlock = oldBlock { position = position }
+  in
+  initialState { finished = t > 4
+     , timePassed = t
+     , frameNum = frameNum
+     , buttonPresses = buttonPresses
+     , currentBlock = updatedBlock
+  }
+
+setBlockPosition :: GameState -> SF ([SDL.Event], Time) GameState
+setBlockPosition gs = switch (sf  >>> second notYet) cont
+  where sf = proc (events, t) -> do
+          let buttonPresses = buttonPressesFrom events
+              (x, y) = position $ currentBlock gs
+              frameNum = (round (t * 60)) `mod` 60
+          dy <- round ^<< integral -< (1.0 :: Float)
+          newY <- arr (\(a, b) -> a + b) -< (y, dy)
+          newGameState <- arr (buildGameState gs) -< ((x, newY), t, frameNum, buttonPresses)
+          inputEvent <- arr (\(bps, y) -> if leftArrow bps then Yampa.Event y else Yampa.NoEvent) -< (buttonPresses, newY)
+          returnA -< (newGameState, inputEvent)
+        cont y =
+          let
+            (oldX, _) = position $ currentBlock gs
+            newGameState = buildGameState gs ((oldX - 1, y), 0, 0, noButtonPressed)
+          in
+          setBlockPosition newGameState
+
 
 defaultBlock :: PlacedBlock
 defaultBlock =
@@ -163,20 +190,6 @@ defaultBlock =
     , orientation = Upright
     , position = (0, 0)
     }
-
-updateGameState :: ([SDL.Event], Time) -> GameState
-updateGameState (events, t) =
-  let
-    buttonPresses = buttonPressesFrom events
-    frameNum = (round (t * 60)) `mod` 60
-  in
-    GameState
-      { finished = t > 4
-      , timePassed = t
-      , frameNum = frameNum
-      , buttonPresses = buttonPresses
-      , currentBlock = defaultBlock
-      }
 
 initScreen :: IO Renderer
 initScreen = do
