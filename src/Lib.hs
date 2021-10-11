@@ -11,6 +11,7 @@ import Data.Time.Clock
 import FRP.Yampa as Yampa
 import SDL as SDL
 import SDL.Vect
+import Debug.Trace
 
 data GameState = GameState
   { finished :: Bool
@@ -66,7 +67,7 @@ data BlockOrientation
   | Upright
   deriving (Show)
 
-type BlockPosition = (Int, Int)
+type BlockPosition = (Int, Float)
 
 runGame :: IO ()
 runGame = do
@@ -128,14 +129,13 @@ output renderer _ gs = do
   drawBorders renderer
   present renderer
   currTime <- getCurrentTime
-  let tp = timePassed gs
-  putStrLn ("currentBlock: " ++ (show (currentBlock gs)))
+  -- putStrLn ("currentBlock: " ++ (show (currentBlock gs)))
   when (finished gs) (putStrLn "Done")
   return (finished gs)
 
 drawBlock :: BlockPosition -> Renderer -> IO ()
 drawBlock (x, y) renderer =
-  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+100)) (fromIntegral (y*20+100)))) (V2 20 20)))
+  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+100)) (fromIntegral ((round y)*20+100)))) (V2 20 20)))
 
 drawBorders :: Renderer -> IO ()
 drawBorders renderer =
@@ -162,18 +162,27 @@ setBlockPosition gs = switch (sf  >>> second notYet) cont
   where sf = proc (events, t) -> do
           let buttonPresses = buttonPressesFrom events
               (x, y) = position $ currentBlock gs
-          dy <- round ^<< integral -< (1.0 :: Float)
+          dy <- integral -< (1.0 :: Float)
           newY <- arr (\(a, b) -> a + b) -< (y, dy)
           newGameState <- arr (buildGameState gs) -< ((x, newY), t)
-          inputEvent <- arr (\(bps, y) -> if leftArrow bps then Yampa.Event y else Yampa.NoEvent) -< (buttonPresses, newY)
+          now <- localTime -< ()
+          inputEvent <- arr controlBlock -< ((buttonPresses, (x, newY)), now)
           returnA -< (newGameState, inputEvent)
-        cont y =
+        cont ((x, y), t) =
           let
-            (oldX, _) = position $ currentBlock gs
-            newGameState = buildGameState gs ((oldX - 1, y), 0)
+            newGameState = buildGameState gs ((x, y), t)
           in
           setBlockPosition newGameState
 
+-- TODO: return Event () and do tag in caller
+controlBlock :: ((ButtonPresses, BlockPosition), Time) -> Yampa.Event (BlockPosition, Time)
+controlBlock ((buttons, (x, y)), t) =
+  if leftArrow buttons then
+    Yampa.Event ((x - 1, y), t)
+  else if rightArrow buttons then
+    Yampa.Event ((x + 1, y), t)
+  else
+    Yampa.NoEvent
 
 defaultBlock :: PlacedBlock
 defaultBlock =
