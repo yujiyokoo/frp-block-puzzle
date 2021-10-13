@@ -123,8 +123,6 @@ output renderer _ gs = do
   events <- pollEvents
   rendererDrawColor renderer $= V4 32 32 32 255
   clear renderer
-  -- draw a red square
-  rendererDrawColor renderer $= V4 192 32 32 255
   drawBlock (position (currentBlock gs)) renderer
   drawBorders renderer
   present renderer
@@ -134,8 +132,9 @@ output renderer _ gs = do
   return (finished gs)
 
 drawBlock :: BlockPosition -> Renderer -> IO ()
-drawBlock (x, y) renderer =
-  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+100)) (fromIntegral ((round y)*20+100)))) (V2 20 20)))
+drawBlock (x, y) renderer = do
+  rendererDrawColor renderer $= V4 192 32 32 255
+  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+100)) (fromIntegral ((round y)*20+40)))) (V2 20 20)))
 
 drawBorders :: Renderer -> IO ()
 drawBorders renderer =
@@ -152,7 +151,7 @@ buildGameState initialState (position, t) =
   let oldBlock = currentBlock initialState
       updatedBlock = oldBlock { position = position }
   in
-  initialState { finished = t > 4
+  initialState { finished = t > 30
      , timePassed = t
      , currentBlock = updatedBlock
   }
@@ -163,7 +162,7 @@ setBlockPosition gs = switch (sf  >>> second notYet) cont
           let buttonPresses = buttonPressesFrom events
               (x, y) = position $ currentBlock gs
           dy <- integral -< (1.0 :: Float)
-          newY <- arr (\(a, b) -> a + b) -< (y, dy)
+          newY <- arr (\(a, b) -> (a + b) `min` 19) -< (y, dy)
           newGameState <- arr (buildGameState gs) -< ((x, newY), t)
           now <- localTime -< ()
           inputEvent <- arr controlBlock -< ((buttonPresses, (x, newY)), now)
