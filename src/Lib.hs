@@ -156,14 +156,8 @@ buildGameState initialState (position, t) =
      , currentBlock = updatedBlock
   }
 
-
-
-
-
-  --- current problem: respawned block does not start falling till left or right pressed
-
 setBlockPosition :: GameState -> SF ([SDL.Event], Time) GameState
-setBlockPosition gs = switch (sf  >>> second notYet) cont
+setBlockPosition gs = switch (sf >>> second notYet) cont
   where sf = proc (events, t) -> do
           let buttonPresses = buttonPressesFrom events
               (x, y) = position $ currentBlock gs
@@ -171,7 +165,7 @@ setBlockPosition gs = switch (sf  >>> second notYet) cont
           newY <- arr (\(a, b) -> (a + b)) -< (y, dy)
           newGameState <- arr (buildGameState gs) -< ((x, newY), t)
           now <- localTime -< ()
-          inputEvent <- arr controlBlock -< (buttonPresses, (x, newY))
+          inputEvent <- arr moveBlock -< (buttonPresses, (x, newY))
           returnA -< (newGameState, inputEvent `attach` now)
         cont ((x, y), t) =
           let
@@ -179,9 +173,8 @@ setBlockPosition gs = switch (sf  >>> second notYet) cont
           in
           setBlockPosition newGameState
 
--- TODO: return Event () and do tag in caller
-controlBlock :: (ButtonPresses, BlockPosition) -> Yampa.Event BlockPosition
-controlBlock (buttons, (x, y)) =
+moveBlock :: (ButtonPresses, BlockPosition) -> Yampa.Event BlockPosition
+moveBlock (buttons, (x, y)) =
   let newY = if y > 19 then 0 else y
   in
   if leftArrow buttons then
@@ -190,6 +183,8 @@ controlBlock (buttons, (x, y)) =
     Yampa.Event (x + 1, newY)
   else if y > 19 then
     Yampa.Event (x, newY)
+  else if downArrow buttons then
+    Yampa.Event (x, newY + 1)
   else
     Yampa.NoEvent
 
