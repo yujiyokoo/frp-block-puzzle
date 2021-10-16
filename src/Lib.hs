@@ -42,12 +42,6 @@ data GameScreen = GameScreen
   , playFieldTop :: Int
   }
 
-defaultGameScreen :: GameScreen
-defaultGameScreen = GameScreen
-  { playFieldLeft = 40
-  , playFieldTop = 40
-  }
-
 data PlacedBlock = PlacedBlock
   { blockShape :: BlockShape
   , orientation :: BlockOrientation
@@ -134,11 +128,11 @@ output renderer _ gs = do
 drawBlock :: BlockPosition -> Renderer -> IO ()
 drawBlock (x, y) renderer = do
   rendererDrawColor renderer $= V4 192 32 32 255
-  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+100)) (fromIntegral ((round y)*20+40)))) (V2 20 20)))
+  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+100)) (fromIntegral ((floor y)*20+40)))) (V2 20 20)))
 
 drawBorders :: Renderer -> IO ()
 drawBorders renderer =
-  let playFieldRect = Rectangle (P (V2 (fromIntegral $ playFieldLeft defaultGameScreen) (fromIntegral $ playFieldTop defaultGameScreen))) (V2 200 400)
+  let playFieldRect = Rectangle (P (V2 40 40)) (V2 200 400)
   in
   drawRect renderer (Just playFieldRect)
 
@@ -165,26 +159,30 @@ setBlockPosition gs = switch (sf >>> second notYet) cont
           newY <- arr (\(a, b) -> (a + b)) -< (y, dy)
           newGameState <- arr (buildGameState gs) -< ((x, newY), t)
           now <- localTime -< ()
-          inputEvent <- arr moveBlock -< (buttonPresses, (x, newY))
-          returnA -< (newGameState, inputEvent `attach` now)
-        cont ((x, y), t) =
+          event <- arr moveBlock -< (buttonPresses, (x, newY))
+          returnA -< (newGameState, event `attach` now)
+        cont (((x, y), shouldPause), t) =
           let
             newGameState = buildGameState gs ((x, y), t)
           in
-          setBlockPosition newGameState
+          if shouldPause then
+            pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newGameState)
+          else
+            setBlockPosition newGameState
 
-moveBlock :: (ButtonPresses, BlockPosition) -> Yampa.Event BlockPosition
+moveBlock :: (ButtonPresses, BlockPosition) -> Yampa.Event (BlockPosition, Bool)
 moveBlock (buttons, (x, y)) =
-  let newY = if y > 19 then 0 else y
+  let bottomReached = (floor y) > 19
+      newY = if bottomReached then 0 else y
   in
   if leftArrow buttons then
-    Yampa.Event (x - 1, newY)
+    Yampa.Event ((x - 1, newY), bottomReached)
   else if rightArrow buttons then
-    Yampa.Event (x + 1, newY)
+    Yampa.Event ((x + 1, newY), bottomReached)
   else if y > 19 then
-    Yampa.Event (x, newY)
+    Yampa.Event ((x, newY), bottomReached)
   else if downArrow buttons then
-    Yampa.Event (x, newY + 1)
+    Yampa.Event ((x, newY + 1), bottomReached)
   else
     Yampa.NoEvent
 
