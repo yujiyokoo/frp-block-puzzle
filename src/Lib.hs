@@ -8,6 +8,8 @@ module Lib
 import Control.Monad
 import Data.IORef
 import Data.Time.Clock
+import Data.List.Safe as Safe
+import Data.Maybe (fromMaybe)
 import FRP.Yampa as Yampa
 import SDL as SDL
 import SDL.Vect
@@ -17,11 +19,12 @@ data GameState = GameState
   { finished :: Bool
   , timePassed :: DTime
   , currentBlock :: PlacedBlock
+  , playFieldState :: PlayFieldState
   }
 
 initialGameState :: GameState
 initialGameState =
-  GameState False 0 defaultBlock
+  GameState False 0 defaultBlock initialPlayFieldState
 
 data ButtonPresses = ButtonPresses
   { upArrow :: Bool
@@ -30,7 +33,7 @@ data ButtonPresses = ButtonPresses
   , rightArrow :: Bool
   , rotateL :: Bool
   , rotateR :: Bool
-  , drop :: Bool
+  , hardDrop :: Bool
   }
   deriving (Show, Eq)
 
@@ -62,6 +65,13 @@ data BlockOrientation
   deriving (Show)
 
 type BlockPosition = (Int, Float)
+
+type PlayFieldState = [[Bool]]
+
+-- play field is 20 x 10. There are extra rows at the top (think row -1 and -2)
+initialPlayFieldState :: PlayFieldState
+initialPlayFieldState =
+  ((replicate 22 $ ([True] ++ (replicate 10 False) ++ [True]))) ++ [(replicate 12 True)]
 
 runGame :: IO ()
 runGame = do
@@ -128,7 +138,7 @@ output renderer _ gs = do
 drawBlock :: BlockPosition -> Renderer -> IO ()
 drawBlock (x, y) renderer = do
   rendererDrawColor renderer $= V4 192 32 32 255
-  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+100)) (fromIntegral ((floor y)*20+40)))) (V2 20 20)))
+  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+40)) (fromIntegral ((floor y)*20+40)))) (V2 20 20)))
 
 drawBorders :: Renderer -> IO ()
 drawBorders renderer =
@@ -159,8 +169,8 @@ setBlockPosition gs = switch (sf >>> second notYet) cont
           newY <- arr (\(a, b) -> (a + b)) -< (y, dy)
           newGameState <- arr (buildGameState gs) -< ((x, newY), t)
           now <- localTime -< ()
-          event <- arr moveBlock -< (buttonPresses, (x, newY))
-          returnA -< (newGameState, event `attach` now)
+          moveEvent <- arr moveBlock -< (buttonPresses, (x, newY), (playFieldState gs))
+          returnA -< (newGameState, moveEvent `attach` now)
         cont (((x, y), shouldPause), t) =
           let
             newGameState = buildGameState gs ((x, y), t)
@@ -170,28 +180,50 @@ setBlockPosition gs = switch (sf >>> second notYet) cont
           else
             setBlockPosition newGameState
 
-moveBlock :: (ButtonPresses, BlockPosition) -> Yampa.Event (BlockPosition, Bool)
-moveBlock (buttons, (x, y)) =
-  let bottomReached = (floor y) > 19
+
+slice :: Int -> Int -> [a] -> [a]
+slice from to xs = take (to - from + 1) (drop from xs)
+
+moveBlock :: (ButtonPresses, BlockPosition, PlayFieldState) -> Yampa.Event (BlockPosition, Bool)
+moveBlock (buttons, (x, y), playFieldState) =
+  let bottomReached = (floor y) > 19 -- is y 20 or over?
       newY = if bottomReached then 0 else y
   in
-  if leftArrow buttons then
+  if (leftArrow buttons) && (canMoveLeft (x, y) playFieldState) then
     Yampa.Event ((x - 1, newY), bottomReached)
-  else if rightArrow buttons then
+  else if (rightArrow buttons) && (canMoveRight (x, y) playFieldState) then
     Yampa.Event ((x + 1, newY), bottomReached)
-  else if y > 19 then
+  else if y > 19 then -- if already bottom, don't check downArrow below
     Yampa.Event ((x, newY), bottomReached)
   else if downArrow buttons then
     Yampa.Event ((x, newY + 1), bottomReached)
   else
     Yampa.NoEvent
 
+canMoveLeft :: BlockPosition -> PlayFieldState -> Bool
+canMoveLeft (x, y) playFieldState =
+  let
+    intY = floor y
+    row = fromMaybe [] $ Safe.head $ slice (intY + 2) (intY + 2) playFieldState
+    cell = fromMaybe False $ Safe.head $ slice x x row
+  in
+  Debug.Trace.trace ("row: " ++ (show row) ++ ", x: " ++ (show x)) (not cell)
+
+canMoveRight :: BlockPosition -> PlayFieldState -> Bool
+canMoveRight (x, y) playFieldState =
+  let
+    intY = floor y
+    row = fromMaybe [] $ Safe.head $ slice (intY + 2) (intY + 2) playFieldState
+    cell = fromMaybe False $ Safe.head $ slice (x + 2) (x + 2) row
+  in
+  Debug.Trace.trace ("row: " ++ (show row) ++ ", x: " ++ (show x)) (not cell)
+
 defaultBlock :: PlacedBlock
 defaultBlock =
   PlacedBlock
     { blockShape = O
     , orientation = Upright
-    , position = (0, 0)
+    , position = (2, 0)
     }
 
 initScreen :: IO Renderer

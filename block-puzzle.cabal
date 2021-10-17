@@ -33,6 +33,7 @@ library
   build-depends:
       Yampa
     , base >=4.7 && <5
+    , listsafe
     , sdl2
     , time
   default-language: Haskell2010
@@ -48,6 +49,7 @@ executable block-puzzle-exe
       Yampa
     , base >=4.7 && <5
     , block-puzzle
+    , listsafe
     , sdl2
     , time
   default-language: Haskell2010
@@ -64,6 +66,7 @@ test-suite block-puzzle-test
       Yampa
     , base >=4.7 && <5
     , block-puzzle
+    , listsafe
     , sdl2
     , time
   default-language: Haskell2010
