@@ -9,6 +9,7 @@ import Control.Monad
 import Data.IORef
 import Data.Time.Clock
 import Data.List.Safe as Safe
+import Data.List.Index (indexed)
 import Data.Maybe (fromMaybe)
 import FRP.Yampa as Yampa
 import SDL as SDL
@@ -71,7 +72,7 @@ type PlayFieldState = [[Bool]]
 -- play field is 20 x 10. There are extra rows at the top (think row -1 and -2)
 initialPlayFieldState :: PlayFieldState
 initialPlayFieldState =
-  ((replicate 22 $ ([True] ++ (replicate 10 False) ++ [True]))) ++ [(replicate 12 True)]
+  ((replicate 22 $ ([True] ++ (replicate 10 False) ++ [True]))) ++ [(replicate 12 True)] ++ [(replicate 12 True)]
 
 runGame :: IO ()
 runGame = do
@@ -127,7 +128,8 @@ output renderer _ gs = do
   events <- pollEvents
   rendererDrawColor renderer $= V4 32 32 32 255
   clear renderer
-  drawBlock (position (currentBlock gs)) renderer
+  drawPlayField (playFieldState gs) renderer
+  drawBlock (currentBlock gs) renderer
   drawBorders renderer
   present renderer
   currTime <- getCurrentTime
@@ -135,10 +137,36 @@ output renderer _ gs = do
   when (finished gs) (putStrLn "Done")
   return (finished gs)
 
-drawBlock :: BlockPosition -> Renderer -> IO ()
-drawBlock (x, y) renderer = do
+get4x4 :: BlockShape -> BlockOrientation -> [[Bool]]
+get4x4 O _ = [ [False, False, False, False], [False, True, True, False], [False, True, True, False], [False, False, False, False]]
+
+drawBlock :: PlacedBlock -> Renderer -> IO ()
+drawBlock PlacedBlock { blockShape = shape, orientation = orientation, position = (x, y)} renderer =
+  let
+    blockMap = get4x4 shape orientation
+    renderRow position (idy, row) = sequence $ map (renderCell (fromIntegral idy)) (indexed row)
+    renderCell idy (idx, blockExists) = when blockExists (drawSquare (x + idx, y + idy) renderer)
+  in
+  sequence_ $ map (renderRow position) (indexed blockMap)
+
+drawSquare :: BlockPosition -> Renderer -> IO ()
+drawSquare (x, y) renderer = do
   rendererDrawColor renderer $= V4 192 32 32 255
   fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+40)) (fromIntegral ((floor y)*20+40)))) (V2 20 20)))
+
+drawPlayField :: PlayFieldState -> Renderer -> IO ()
+drawPlayField playField renderer = do
+  sequence_ $
+    map
+      (\(idy, row) ->
+        sequence $
+          map
+            (\(idx, cell) ->
+              when cell (drawSquare (idx - 1, (fromIntegral idy) - 2) renderer)
+            )
+            (indexed row)
+      )
+      (indexed playField)
 
 drawBorders :: Renderer -> IO ()
 drawBorders renderer =
@@ -160,6 +188,22 @@ buildGameState initialState (position, t) =
      , currentBlock = updatedBlock
   }
 
+placeBlock :: BlockPosition -> GameState -> GameState
+placeBlock (x, y) gs =
+  let
+    intY = floor y
+    playField = playFieldState gs
+    -- TODO: introduce lens for this kind of stuff?
+    row = fromMaybe [] $ Safe.head $ slice (intY + 2) (intY + 2) playField
+    (beforeX, xAndAfter) = splitAt (x + 1) row
+    newRow = beforeX ++ [True] ++ (fromMaybe [] $ Safe.tail xAndAfter)
+    (beforeY, yAndAfter) = splitAt (intY + 2) playField
+    newPlayField = beforeY ++ [newRow] ++ (fromMaybe [] $ Safe.tail yAndAfter)
+  in
+    gs { playFieldState = newPlayField }
+
+
+
 setBlockPosition :: GameState -> SF ([SDL.Event], Time) GameState
 setBlockPosition gs = switch (sf >>> second notYet) cont
   where sf = proc (events, t) -> do
@@ -171,52 +215,58 @@ setBlockPosition gs = switch (sf >>> second notYet) cont
           now <- localTime -< ()
           moveEvent <- arr moveBlock -< (buttonPresses, (x, newY), (playFieldState gs))
           returnA -< (newGameState, moveEvent `attach` now)
-        cont (((x, y), shouldPause), t) =
+        cont (((x, y), keepBlockAt), t) =
           let
             newGameState = buildGameState gs ((x, y), t)
           in
-          if shouldPause then
-            pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newGameState)
-          else
-            setBlockPosition newGameState
+          case keepBlockAt of
+            Just pos ->
+              pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition (placeBlock pos newGameState))
+            Nothing ->
+              setBlockPosition newGameState
 
 
 slice :: Int -> Int -> [a] -> [a]
 slice from to xs = take (to - from + 1) (drop from xs)
 
-moveBlock :: (ButtonPresses, BlockPosition, PlayFieldState) -> Yampa.Event (BlockPosition, Bool)
+moveBlock :: (ButtonPresses, BlockPosition, PlayFieldState) -> Yampa.Event (BlockPosition, Maybe BlockPosition)
 moveBlock (buttons, (x, y), playFieldState) =
-  let bottomReached = (floor y) > 19 -- is y 20 or over?
-      newY = if bottomReached then 0 else y
+  let blockStopped = not $ canMoveTo (x, y) playFieldState
+      cannotMoveDown = not $ canMoveTo (x, y+1) playFieldState
+      newY = if (Debug.Trace.trace ("blockStopped: " ++ (show blockStopped)) blockStopped) then 0 else y
+      keepBlockAt = if blockStopped then Just (x, y - 1) else Nothing
   in
   if (leftArrow buttons) && (canMoveLeft (x, y) playFieldState) then
-    Yampa.Event ((x - 1, newY), bottomReached)
+    Yampa.Event ((x - 1, newY), keepBlockAt)
   else if (rightArrow buttons) && (canMoveRight (x, y) playFieldState) then
-    Yampa.Event ((x + 1, newY), bottomReached)
-  else if y > 19 then -- if already bottom, don't check downArrow below
-    Yampa.Event ((x, newY), bottomReached)
+    Yampa.Event ((x + 1, newY), keepBlockAt)
+  else if cannotMoveDown then -- if already bottom, don't check downArrow below
+    Yampa.Event ((x, newY), keepBlockAt)
   else if downArrow buttons then
-    Yampa.Event ((x, newY + 1), bottomReached)
+    Yampa.Event ((x, newY + 1), keepBlockAt)
   else
     Yampa.NoEvent
 
-canMoveLeft :: BlockPosition -> PlayFieldState -> Bool
-canMoveLeft (x, y) playFieldState =
+data MoveDirection
+  = Left
+  | Right
+
+canMoveTo :: BlockPosition -> PlayFieldState -> Bool
+canMoveTo (x, y) playFieldState =
   let
     intY = floor y
     row = fromMaybe [] $ Safe.head $ slice (intY + 2) (intY + 2) playFieldState
-    cell = fromMaybe False $ Safe.head $ slice x x row
+    cell = fromMaybe False $ Safe.head $ slice (x + 1) (x + 1) row
   in
-  Debug.Trace.trace ("row: " ++ (show row) ++ ", x: " ++ (show x)) (not cell)
+  not cell
+
+canMoveLeft :: BlockPosition -> PlayFieldState -> Bool
+canMoveLeft (x, y) playFieldState =
+  canMoveTo (x - 1, y) playFieldState
 
 canMoveRight :: BlockPosition -> PlayFieldState -> Bool
 canMoveRight (x, y) playFieldState =
-  let
-    intY = floor y
-    row = fromMaybe [] $ Safe.head $ slice (intY + 2) (intY + 2) playFieldState
-    cell = fromMaybe False $ Safe.head $ slice (x + 2) (x + 2) row
-  in
-  Debug.Trace.trace ("row: " ++ (show row) ++ ", x: " ++ (show x)) (not cell)
+  canMoveTo (x + 1, y) playFieldState
 
 defaultBlock :: PlacedBlock
 defaultBlock =

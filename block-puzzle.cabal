@@ -33,6 +33,7 @@ library
   build-depends:
       Yampa
     , base >=4.7 && <5
+    , ilist
     , listsafe
     , sdl2
     , time
@@ -49,6 +50,7 @@ executable block-puzzle-exe
       Yampa
     , base >=4.7 && <5
     , block-puzzle
+    , ilist
     , listsafe
     , sdl2
     , time
@@ -66,6 +68,7 @@ test-suite block-puzzle-test
       Yampa
     , base >=4.7 && <5
     , block-puzzle
+    , ilist
     , listsafe
     , sdl2
     , time
