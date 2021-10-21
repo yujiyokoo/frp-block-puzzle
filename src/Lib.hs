@@ -72,7 +72,7 @@ type PlayFieldState = [[Bool]]
 -- play field is 20 x 10. There are extra rows at the top (think row -1 and -2)
 initialPlayFieldState :: PlayFieldState
 initialPlayFieldState =
-  ((replicate 22 $ ([True] ++ (replicate 10 False) ++ [True]))) ++ [(replicate 12 True)] ++ [(replicate 12 True)]
+  ((replicate 22 $ ([True] ++ (replicate 10 False) ++ [True]))) ++ [(replicate 12 True)]
 
 runGame :: IO ()
 runGame = do
@@ -129,7 +129,8 @@ output renderer _ gs = do
   rendererDrawColor renderer $= V4 32 32 32 255
   clear renderer
   drawPlayField (playFieldState gs) renderer
-  drawBlock (currentBlock gs) renderer
+  -- drawBlock (currentBlock gs) renderer
+  drawSquare (position $ currentBlock gs) renderer
   drawBorders renderer
   present renderer
   currTime <- getCurrentTime
@@ -233,10 +234,12 @@ moveBlock :: (ButtonPresses, BlockPosition, PlayFieldState) -> Yampa.Event (Bloc
 moveBlock (buttons, (x, y), playFieldState) =
   let blockStopped = not $ canMoveTo (x, y) playFieldState
       cannotMoveDown = not $ canMoveTo (x, y+1) playFieldState
-      newY = if (Debug.Trace.trace ("blockStopped: " ++ (show blockStopped)) blockStopped) then 0 else y
+      newY = if blockStopped then 0 else y
       keepBlockAt = if blockStopped then Just (x, y - 1) else Nothing
   in
-  if (leftArrow buttons) && (canMoveLeft (x, y) playFieldState) then
+  if blockStopped then
+    Yampa.Event ((x, newY), keepBlockAt)
+  else if (leftArrow buttons) && (canMoveLeft (x, y) playFieldState) then
     Yampa.Event ((x - 1, newY), keepBlockAt)
   else if (rightArrow buttons) && (canMoveRight (x, y) playFieldState) then
     Yampa.Event ((x + 1, newY), keepBlockAt)
