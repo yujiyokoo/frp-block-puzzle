@@ -18,14 +18,13 @@ import Debug.Trace
 
 data GameState = GameState
   { finished :: Bool
-  , timePassed :: DTime
   , currentBlock :: PlacedBlock
   , playFieldState :: PlayFieldState
   }
 
 initialGameState :: GameState
 initialGameState =
-  GameState False 0 defaultBlock initialPlayFieldState
+  GameState False defaultBlock initialPlayFieldState
 
 data ButtonPresses = ButtonPresses
   { upArrow :: Bool
