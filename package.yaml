@@ -26,6 +26,7 @@ dependencies:
 - sdl2
 - listsafe
 - ilist
+- random
 
 library:
   source-dirs: src

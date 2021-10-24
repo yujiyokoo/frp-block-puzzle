@@ -35,6 +35,7 @@ library
     , base >=4.7 && <5
     , ilist
     , listsafe
+    , random
     , sdl2
     , time
   default-language: Haskell2010
@@ -52,6 +53,7 @@ executable block-puzzle-exe
     , block-puzzle
     , ilist
     , listsafe
+    , random
     , sdl2
     , time
   default-language: Haskell2010
@@ -70,6 +72,7 @@ test-suite block-puzzle-test
     , block-puzzle
     , ilist
     , listsafe
+    , random
     , sdl2
     , time
   default-language: Haskell2010

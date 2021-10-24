@@ -1,6 +1,9 @@
 module Main where
 
 import Lib
+import System.Random (newStdGen)
 
 main :: IO ()
-main = runGame
+main = do
+  sg <- newStdGen
+  runGame sg
