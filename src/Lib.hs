@@ -35,11 +35,12 @@ data ButtonPresses = ButtonPresses
   , rotateL :: Bool
   , rotateR :: Bool
   , hardDrop :: Bool
+  , quitKey :: Bool
   }
   deriving (Show, Eq)
 
 noButtonPressed :: ButtonPresses
-noButtonPressed = ButtonPresses False False False False False False False
+noButtonPressed = ButtonPresses False False False False False False False False
 
 data GameScreen = GameScreen
   { playFieldLeft :: Int
@@ -104,8 +105,9 @@ buttonPressesFrom events =
       shift = any (checkKeyPress [ScancodeLShift, ScancodeRShift]) events
       ctrl = any (checkKeyPress [ScancodeLCtrl, ScancodeRCtrl]) events
       sp = any (checkKeyPress [ScancodeSpace]) events
+      q = any (checkKeyPress [ScancodeEscape]) events
   in
-  ButtonPresses u d l r shift ctrl sp
+  ButtonPresses u d l r shift ctrl sp q
 
 checkKeyPress :: [Scancode] -> SDL.Event -> Bool
 checkKeyPress scanCodes event =
@@ -177,12 +179,11 @@ drawBorders renderer =
 
 process :: RandomGen rg => rg -> GameState -> SF [SDL.Event] GameState
 process rg initialState =
-    (Yampa.identity &&& Yampa.time) >>> (setBlockPosition rg initialState)
+    (Yampa.identity &&& Yampa.constant False) >>> (setBlockPosition rg initialState)
 
-buildGameState :: GameState -> (PlacedBlock, DTime) -> GameState
-buildGameState initialState (block, t) =
-  initialState { finished = t > 30
-     , timePassed = t
+buildGameState :: GameState -> (PlacedBlock, Bool) -> GameState
+buildGameState initialState (block, f) =
+  initialState { finished = f
      , currentBlock = block
   }
 
@@ -202,7 +203,7 @@ placeBlock (x, y) gs =
 
 
 
-setBlockPosition :: RandomGen rg => rg -> GameState -> SF ([SDL.Event], Time) GameState
+setBlockPosition :: RandomGen rg => rg -> GameState -> SF ([SDL.Event], Bool) GameState
 setBlockPosition rg gs = switch (sf >>> second notYet) cont
   where sf = proc (events, t) -> do
           let buttonPresses = buttonPressesFrom events
@@ -210,13 +211,14 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
               (x, y) = position $ block
           dy <- integral -< (1.0 :: Float)
           newY <- arr (\(a, b) -> (a + b)) -< (y, dy)
-          newGameState <- arr (buildGameState gs) -< (block { position = (x, newY) }, t)
+          hasQuit <- arr quitKey -< buttonPresses
+          newGameState <- arr (buildGameState gs) -< (block { position = (x, newY) }, hasQuit)
           now <- localTime -< ()
           moveEvent <- arr moveBlock -< (rg, buttonPresses, block { position = (x, newY) }, (playFieldState gs))
-          returnA -< (newGameState, moveEvent `attach` now)
-        cont ((block@(PlacedBlock { position = (x, y)}), keepBlocksAt, newRg), t) =
+          returnA -< (newGameState, moveEvent `attach` hasQuit)
+        cont ((block@(PlacedBlock { position = (x, y)}), keepBlocksAt, newRg), q) =
           let
-            newGameState = buildGameState gs (block, t)
+            newGameState = buildGameState gs (block, q)
           in
           case keepBlocksAt of
             [] ->
@@ -224,7 +226,7 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
             positions ->
               pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg (foldr placeBlock newGameState positions))
 
-
+-- slices list from index to another (both inclusive)
 slice :: Int -> Int -> [a] -> [a]
 slice from to xs =
   if from > 0 then
@@ -263,7 +265,7 @@ randomBlock rg =
   let
     (i, newRg) = randomR (0::Int, 1::Int) rg
   in
-  if (Debug.Trace.trace ("i is: " ++ (show i)) i) == 0 then
+  if i == 0 then
     (I, Upright, newRg)
   else
     (O, Upright, newRg)
