@@ -72,7 +72,8 @@ type PlayFieldState = [[Bool]]
 -- play field is 20 x 10. There are extra rows at the top (think row -1 and -2)
 initialPlayFieldState :: PlayFieldState
 initialPlayFieldState =
-  ((replicate 22 $ ([True] ++ (replicate 10 False) ++ [True]))) ++ [(replicate 12 True)]
+  -- extra False added so 'I' block can go to the right most column
+  ((replicate 22 $ ([True] ++ (replicate 10 False) ++ [True, False]))) ++ [(replicate 12 True)]
 
 runGame :: RandomGen rg => rg -> IO ()
 runGame rg = do
