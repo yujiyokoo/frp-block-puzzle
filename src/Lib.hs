@@ -72,8 +72,11 @@ type PlayFieldState = [[Bool]]
 -- play field is 20 x 10. There are extra rows at the top (think row -1 and -2)
 initialPlayFieldState :: PlayFieldState
 initialPlayFieldState =
-  -- extra False added so 'I' block can go to the right most column
-  ((replicate 22 $ ([True] ++ (replicate 10 False) ++ [True, False]))) ++ [(replicate 12 True)]
+  -- extra False added at the right end so 'I' block can go to the right most column
+  ((replicate 22 $ blankRow) ++ [(replicate 12 True)])
+
+blankRow :: [Bool]
+blankRow = ([True] ++ (replicate 10 False) ++ [True, False])
 
 runGame :: RandomGen rg => rg -> IO ()
 runGame rg = do
@@ -179,16 +182,68 @@ drawBorders renderer =
 
 process :: RandomGen rg => rg -> GameState -> SF [SDL.Event] GameState
 process rg initialState =
-    (Yampa.identity &&& Yampa.constant False) >>> (setBlockPosition rg initialState)
+    (Yampa.identity &&& Yampa.constant Running) >>> (setBlockPosition rg initialState)
 
-buildGameState :: GameState -> (PlacedBlock, Bool) -> GameState
-buildGameState initialState (block, f) =
-  initialState { finished = f
+buildGameState :: GameState -> (PlacedBlock, GameMode) -> GameState
+buildGameState initialState (block, mode) =
+  initialState { finished = (mode == Quitting)
      , currentBlock = block
   }
 
-placeBlock :: BlockPosition -> GameState -> GameState
-placeBlock (x, y) gs =
+data GameMode
+  = Running
+  | Quitting
+  | Deleting [Int]
+  -- | Deleted [Int]
+  deriving (Show, Eq)
+
+setBlockPosition :: RandomGen rg => rg -> GameState -> SF ([SDL.Event], GameMode) GameState
+setBlockPosition rg gs = switch (sf >>> second notYet) cont
+  where sf = proc (events, t) -> do
+          let buttonPresses = buttonPressesFrom events
+              block = currentBlock gs
+              (x, y) = position $ block
+          dy <- integral -< (1.0 :: Float)
+          newY <- arr (\(a, b) -> (a + b)) -< (y, dy)
+          -- if there's a full row, mode turns into 'deleting'
+          gameMode <- arr computeGameMode -< (buttonPresses, (playFieldState gs))
+          newGameState <- arr (buildGameState gs) -< (block { position = (x, newY) }, gameMode)
+          now <- localTime -< ()
+          moveEvent <- arr moveBlock -< (rg, buttonPresses, block { position = (x, newY) }, (playFieldState gs))
+          returnA -< (newGameState, moveEvent `attach` gameMode)
+        cont ((block@(PlacedBlock { position = (x, y)}), keepBlocksAt, newRg), mode) =
+          let
+            newGameState = buildGameState gs (block, mode)
+          in
+          -- if mode is 'deleting' blacken rows and pause for 1 second, then remove rows
+          case Debug.Trace.trace ("mode is: " ++ (show mode)) mode of
+            Deleting indexes ->
+              pause (foldr replaceWithBlankRow newGameState indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg (foldr removeRow newGameState indexes))
+            Quitting ->
+              setBlockPosition newRg newGameState
+            Running ->
+              case keepBlocksAt of
+                [] ->
+                  setBlockPosition newRg newGameState
+                positions ->
+                  pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg (foldr placeSquare newGameState positions))
+
+computeGameMode :: (ButtonPresses, PlayFieldState) -> GameMode
+computeGameMode (bp, field) =
+  let
+    fullRows =
+      filter (\(idx, _) -> idx > 1 && idx < 22) $ filter isFullRow (indexed field)
+    isFullRow (_, list) = all id (slice 1 10 list)
+  in
+  if quitKey bp then
+    Quitting
+  else if fullRows /= [] then
+    Deleting (map fst fullRows)
+  else
+    Running
+
+placeSquare :: BlockPosition -> GameState -> GameState
+placeSquare (x, y) gs =
   let
     intY = floor y
     playField = playFieldState gs
@@ -201,30 +256,23 @@ placeBlock (x, y) gs =
   in
     gs { playFieldState = newPlayField }
 
+replaceWithBlankRow :: Int -> GameState -> GameState
+replaceWithBlankRow idx gs =
+  let
+    playField = playFieldState gs
+    (beforeElem, elemAndAfter) = splitAt idx playField
+    newPlayField = beforeElem ++ [blankRow] ++ (fromMaybe [] $ Safe.tail elemAndAfter)
+  in
+  gs { playFieldState = newPlayField }
 
-
-setBlockPosition :: RandomGen rg => rg -> GameState -> SF ([SDL.Event], Bool) GameState
-setBlockPosition rg gs = switch (sf >>> second notYet) cont
-  where sf = proc (events, t) -> do
-          let buttonPresses = buttonPressesFrom events
-              block = currentBlock gs
-              (x, y) = position $ block
-          dy <- integral -< (1.0 :: Float)
-          newY <- arr (\(a, b) -> (a + b)) -< (y, dy)
-          hasQuit <- arr quitKey -< buttonPresses
-          newGameState <- arr (buildGameState gs) -< (block { position = (x, newY) }, hasQuit)
-          now <- localTime -< ()
-          moveEvent <- arr moveBlock -< (rg, buttonPresses, block { position = (x, newY) }, (playFieldState gs))
-          returnA -< (newGameState, moveEvent `attach` hasQuit)
-        cont ((block@(PlacedBlock { position = (x, y)}), keepBlocksAt, newRg), q) =
-          let
-            newGameState = buildGameState gs (block, q)
-          in
-          case keepBlocksAt of
-            [] ->
-              setBlockPosition newRg newGameState
-            positions ->
-              pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg (foldr placeBlock newGameState positions))
+removeRow :: Int -> GameState -> GameState
+removeRow idx gs =
+  let
+    playField = playFieldState gs
+    (beforeElem, elemAndAfter) = splitAt idx playField
+    newPlayField = [blankRow] ++ beforeElem ++ (fromMaybe [] $ Safe.tail elemAndAfter)
+  in
+  gs { playFieldState = newPlayField }
 
 -- slices list from index to another (both inclusive)
 slice :: Int -> Int -> [a] -> [a]
