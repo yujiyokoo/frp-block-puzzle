@@ -218,7 +218,12 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
           -- if mode is 'deleting' blacken rows and pause for 1 second, then remove rows
           case Debug.Trace.trace ("mode is: " ++ (show mode)) mode of
             Deleting indexes ->
-              pause (foldr replaceWithBlankRow newGameState indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg (foldr removeRow newGameState indexes))
+              let
+                playField = playFieldState newGameState
+                updatedPlayField = (replicate (length indexes) blankRow ) ++ (foldr removeRow playField indexes)
+                updatedGameState = newGameState { playFieldState = updatedPlayField }
+              in
+              pause (foldr replaceWithBlankRow newGameState indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg (Debug.Trace.trace ("playField: " ++ (show (playFieldState updatedGameState))) updatedGameState))
             Quitting ->
               setBlockPosition newRg newGameState
             Running ->
@@ -265,14 +270,15 @@ replaceWithBlankRow idx gs =
   in
   gs { playFieldState = newPlayField }
 
-removeRow :: Int -> GameState -> GameState
-removeRow idx gs =
+trc :: Show a => String -> a -> a
+trc str a = Debug.Trace.trace (str ++ ": " ++ (show a)) a
+
+removeRow :: Int -> PlayFieldState -> PlayFieldState
+removeRow idx playField =
   let
-    playField = playFieldState gs
     (beforeElem, elemAndAfter) = splitAt idx playField
-    newPlayField = [blankRow] ++ beforeElem ++ (fromMaybe [] $ Safe.tail elemAndAfter)
   in
-  gs { playFieldState = newPlayField }
+  beforeElem ++ (fromMaybe [] $ Safe.tail elemAndAfter)
 
 -- slices list from index to another (both inclusive)
 slice :: Int -> Int -> [a] -> [a]
