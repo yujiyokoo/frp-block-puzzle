@@ -51,19 +51,19 @@ data PlacedBlock = PlacedBlock
   , orientation :: BlockOrientation
   , position :: BlockPosition
   }
-  deriving (Show)
+  deriving (Show, Eq)
 
 data BlockShape
   = O
   | I
-  deriving (Show)
+  deriving (Show, Eq)
 
 data BlockOrientation
   = LeftTilt
   | UpsideDown
   | RightTilt
   | Upright
-  deriving (Show)
+  deriving (Show, Eq)
 
 type BlockPosition = (Int, Float)
 
@@ -184,36 +184,53 @@ process :: RandomGen rg => rg -> GameState -> SF [SDL.Event] GameState
 process rg initialState =
     (Yampa.identity &&& Yampa.constant Running) >>> (setBlockPosition rg initialState)
 
-buildGameState :: GameState -> (PlacedBlock, GameMode) -> GameState
-buildGameState initialState (block, mode) =
-  initialState { finished = (mode == Quitting)
-     , currentBlock = block
-  }
+buildGameState :: GameState -> PlacedBlock -> GameState
+buildGameState initialState block =
+  initialState { currentBlock = block }
 
-data GameMode
+data GameEvent
   = Running
   | Quitting
   | Deleting [Int]
-  -- | Deleted [Int]
+  | Landing [BlockPosition] PlacedBlock
+  | BlockMove PlacedBlock
   deriving (Show, Eq)
 
-setBlockPosition :: RandomGen rg => rg -> GameState -> SF ([SDL.Event], GameMode) GameState
+setBlockPosition :: RandomGen rg => rg -> GameState -> SF ([SDL.Event], GameEvent) GameState
 setBlockPosition rg gs = switch (sf >>> second notYet) cont
-  where sf = proc (events, t) -> do
+  where sf = proc (events, gm) -> do
           let buttonPresses = buttonPressesFrom events
               block = currentBlock gs
               (x, y) = position $ block
+              (nextBlock, nextRg) = randomBlock rg
           dy <- integral -< (1.0 :: Float)
           newY <- arr (\(a, b) -> (a + b)) -< (y, dy)
           -- if there's a full row, mode turns into 'deleting'
-          gameMode <- arr computeGameMode -< (buttonPresses, (playFieldState gs))
-          newGameState <- arr (buildGameState gs) -< (block { position = (x, newY) }, gameMode)
-          now <- localTime -< ()
-          moveEvent <- arr moveBlock -< (rg, buttonPresses, block { position = (x, newY) }, (playFieldState gs))
-          returnA -< (newGameState, moveEvent `attach` gameMode)
-        cont ((block@(PlacedBlock { position = (x, y)}), keepBlocksAt, newRg), mode) =
+          gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs))
+          landingEvent <- arr landBlock -< (block { position = (x, newY) }, (playFieldState gs), nextBlock)
+          newGameState <- arr (buildGameState gs) -< block { position = (x, newY) }
+          moveEvent <- arr moveBlock -< (nextBlock, buttonPresses, block { position = (x, newY) }, (playFieldState gs))
+          returnA -< (newGameState, (gameModeEvent `lMerge` landingEvent `lMerge` moveEvent) `attach` nextRg)
+        -- keep blocks at should be represented in Landing [BlockPosition]
+        cont (Quitting, rg) =
+          setBlockPosition rg (gs { finished = True })
+        cont (Deleting indexes, rg) =
           let
-            newGameState = buildGameState gs (block, mode)
+            playField = playFieldState gs
+            updatedPlayField = (replicate (length indexes) blankRow) ++ (foldr removeRow playField indexes)
+            updatedGameState = gs { playFieldState = updatedPlayField }
+          in
+          pause (foldr replaceWithBlankRow gs indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg updatedGameState)
+        cont (Running, rg) =
+          setBlockPosition rg gs
+        cont (Landing positions newBlock, rg) =
+          pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg (foldr placeSquare (gs { currentBlock = newBlock }) positions))
+        cont (BlockMove placedBlock, rg) =
+          setBlockPosition rg (gs { currentBlock = placedBlock })
+{-
+        cont ((block, keepBlocksAt, newRg), mode) =
+          let
+            newGameState = buildGameState gs block
           in
           -- if mode is 'deleting' blacken rows and pause for 1 second, then remove rows
           case Debug.Trace.trace ("mode is: " ++ (show mode)) mode of
@@ -223,17 +240,18 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
                 updatedPlayField = (replicate (length indexes) blankRow ) ++ (foldr removeRow playField indexes)
                 updatedGameState = newGameState { playFieldState = updatedPlayField }
               in
-              pause (foldr replaceWithBlankRow newGameState indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg (Debug.Trace.trace ("playField: " ++ (show (playFieldState updatedGameState))) updatedGameState))
+              pause (foldr replaceWithBlankRow newGameState indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg updatedGameState)
             Quitting ->
-              setBlockPosition newRg newGameState
+              setBlockPosition newRg (newGameState { finished = True })
             Running ->
               case keepBlocksAt of
                 [] ->
                   setBlockPosition newRg newGameState
                 positions ->
                   pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg (foldr placeSquare newGameState positions))
+-}
 
-computeGameMode :: (ButtonPresses, PlayFieldState) -> GameMode
+computeGameMode :: (ButtonPresses, PlayFieldState) -> Yampa.Event GameEvent
 computeGameMode (bp, field) =
   let
     fullRows =
@@ -241,11 +259,11 @@ computeGameMode (bp, field) =
     isFullRow (_, list) = all id (slice 1 10 list)
   in
   if quitKey bp then
-    Quitting
+    Yampa.Event Quitting
   else if fullRows /= [] then
-    Deleting (map fst fullRows)
+    Yampa.Event (Deleting (map fst fullRows))
   else
-    Running
+    Yampa.NoEvent
 
 placeSquare :: BlockPosition -> GameState -> GameState
 placeSquare (x, y) gs =
@@ -288,41 +306,49 @@ slice from to xs =
   else
     take (to + 1) xs
 
-moveBlock :: RandomGen rg => (rg, ButtonPresses, PlacedBlock, PlayFieldState) -> Yampa.Event (PlacedBlock, [BlockPosition], rg)
-moveBlock (rg, buttons, block@(PlacedBlock { position = (x, y) }), playFieldState) =
+landBlock :: (PlacedBlock, PlayFieldState, BlockShape) -> Yampa.Event GameEvent
+landBlock (block@(PlacedBlock { position = (x, y) }), playFieldState, nextBlock) =
+  let
+    blockStopped = not $ canMoveTo block playFieldState
+    landingBlocks = blocksToKeep blockStopped block
+  in
+  if blockStopped then
+    Yampa.Event (Landing landingBlocks (PlacedBlock nextBlock Upright (3, 2)))
+  else
+    Yampa.NoEvent
+
+moveBlock :: (BlockShape, ButtonPresses, PlacedBlock, PlayFieldState) -> Yampa.Event GameEvent
+moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (x, y) }), playFieldState) =
   let
     blockStopped = not $ canMoveTo block playFieldState
     cannotMoveDown = not $ canMoveTo (block { position = (x, y + 1) }) playFieldState
-    (newX, newY, (newShape, newOrientation, newRg)) =
+    (newX, newY, (newShape, newOrientation)) =
       if blockStopped then
-        (3, 2, randomBlock rg) -- Note the 'top' is 2, not 0
+        (3, 2, (nextBlockShape, Upright)) -- Note the 'top' is 2, not 0
       else
-        (x, y, (blockShape block, orientation block, rg))
-    keepBlocksAt = blocksToKeep blockStopped block
+        (x, y, (blockShape block, orientation block))
   in
-  if blockStopped then
-    Yampa.Event (block { position = (newX, newY), blockShape = newShape, orientation = newOrientation }, keepBlocksAt, newRg)
-  else if (leftArrow buttons) && (canMoveLeft block playFieldState) then
-    Yampa.Event (block { position = (newX - 1, newY), blockShape = newShape, orientation = newOrientation }, keepBlocksAt, newRg)
+  if (leftArrow buttons) && (canMoveLeft block playFieldState) then
+    Yampa.Event $ BlockMove (block { position = (newX - 1, newY), blockShape = newShape, orientation = newOrientation })
   else if (rightArrow buttons) && (canMoveRight block playFieldState) then
-    Yampa.Event (block { position = (newX + 1, newY), blockShape = newShape, orientation = newOrientation }, keepBlocksAt, newRg)
+    Yampa.Event $ BlockMove (block { position = (newX + 1, newY), blockShape = newShape, orientation = newOrientation })
   else if cannotMoveDown then -- if already bottom, don't check downArrow below
-    Yampa.Event (block { position = (newX, newY), blockShape = newShape, orientation = newOrientation }, keepBlocksAt, newRg)
+    Yampa.Event $ BlockMove (block { position = (newX, newY), blockShape = newShape, orientation = newOrientation })
   else if downArrow buttons then
-    Yampa.Event (block { position = (newX, newY + 1), blockShape = newShape, orientation = newOrientation }, keepBlocksAt, newRg)
+    Yampa.Event $ BlockMove (block { position = (newX, newY + 1), blockShape = newShape, orientation = newOrientation })
   else
     Yampa.NoEvent
 
 -- TODO: Stop hard coding range... count enum?
-randomBlock :: RandomGen rg => rg -> (BlockShape, BlockOrientation, rg)
+randomBlock :: RandomGen rg => rg -> (BlockShape, rg)
 randomBlock rg =
   let
     (i, newRg) = randomR (0::Int, 1::Int) rg
   in
   if i == 0 then
-    (I, Upright, newRg)
+    (I, newRg)
   else
-    (O, Upright, newRg)
+    (O, newRg)
 
 
 
