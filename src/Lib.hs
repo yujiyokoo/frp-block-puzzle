@@ -227,29 +227,6 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
           pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg (foldr placeSquare (gs { currentBlock = newBlock }) positions))
         cont (BlockMove placedBlock, rg) =
           setBlockPosition rg (gs { currentBlock = placedBlock })
-{-
-        cont ((block, keepBlocksAt, newRg), mode) =
-          let
-            newGameState = buildGameState gs block
-          in
-          -- if mode is 'deleting' blacken rows and pause for 1 second, then remove rows
-          case Debug.Trace.trace ("mode is: " ++ (show mode)) mode of
-            Deleting indexes ->
-              let
-                playField = playFieldState newGameState
-                updatedPlayField = (replicate (length indexes) blankRow ) ++ (foldr removeRow playField indexes)
-                updatedGameState = newGameState { playFieldState = updatedPlayField }
-              in
-              pause (foldr replaceWithBlankRow newGameState indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg updatedGameState)
-            Quitting ->
-              setBlockPosition newRg (newGameState { finished = True })
-            Running ->
-              case keepBlocksAt of
-                [] ->
-                  setBlockPosition newRg newGameState
-                positions ->
-                  pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition newRg (foldr placeSquare newGameState positions))
--}
 
 computeGameMode :: (ButtonPresses, PlayFieldState) -> Yampa.Event GameEvent
 computeGameMode (bp, field) =
@@ -320,12 +297,8 @@ landBlock (block@(PlacedBlock { position = (x, y) }), playFieldState, nextBlock)
 moveBlock :: (BlockShape, ButtonPresses, PlacedBlock, PlayFieldState) -> Yampa.Event GameEvent
 moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (x, y) }), playFieldState) =
   let
-    blockStopped = not $ canMoveTo block playFieldState
     cannotMoveDown = not $ canMoveTo (block { position = (x, y + 1) }) playFieldState
     (newX, newY, (newShape, newOrientation)) =
-      if blockStopped then
-        (3, 2, (nextBlockShape, Upright)) -- Note the 'top' is 2, not 0
-      else
         (x, y, (blockShape block, orientation block))
   in
   if (leftArrow buttons) && (canMoveLeft block playFieldState) then
