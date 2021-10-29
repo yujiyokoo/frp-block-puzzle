@@ -75,11 +75,10 @@ type PlayFieldState = [[Bool]]
 -- play field is 20 x 10. There are extra rows at the top (think row -1 and -2)
 initialPlayFieldState :: PlayFieldState
 initialPlayFieldState =
-  -- extra False added at the right end so 'I' block can go to the right most column
   ((replicate 22 $ blankRow) ++ [(replicate 12 True)])
 
 blankRow :: [Bool]
-blankRow = ([True] ++ (replicate 10 False) ++ [True, False])
+blankRow = replicate 10 False
 
 runGame :: RandomGen rg => rg -> IO ()
 runGame rg = do
@@ -170,7 +169,7 @@ drawPlayField playField renderer = do
         sequence $
           map
             (\(idx, cell) ->
-              when cell (drawSquare (Position (idx - 1) (fromIntegral idy)) renderer)
+              when cell (drawSquare (Position idx (fromIntegral idy)) renderer)
             )
             (indexed row)
       )
@@ -261,7 +260,7 @@ placeSquare (Position x y) gs =
     playField = playFieldState gs
     -- TODO: introduce lens for this kind of stuff?
     row = fromMaybe [] $ Safe.head $ slice intY intY playField
-    (beforeX, xAndAfter) = splitAt (x + 1) row
+    (beforeX, xAndAfter) = splitAt x row
     newRow = beforeX ++ [True] ++ (fromMaybe [] $ Safe.tail xAndAfter)
     (beforeY, yAndAfter) = splitAt intY playField
     newPlayField = beforeY ++ [newRow] ++ (fromMaybe [] $ Safe.tail yAndAfter)
@@ -311,7 +310,7 @@ moveBlock :: (BlockShape, ButtonPresses, PlacedBlock, PlayFieldState) -> Yampa.E
 moveBlock (_, _, PlacedBlock { position = NoPosition }, _) = Yampa.NoEvent
 moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (Position x y), blockShape = shape, orientation = orientation }), playFieldState) =
   let
-    cannotMoveDown = not $ canMoveTo (block { position = (Position x (y + 1)) }) playFieldState
+    canMoveDown = canMoveTo (block { position = (Position x (y + 1)) }) playFieldState
   in
   if (rotateL buttons) && (canRotateL block playFieldState) then
     Yampa.Event $ BlockMove (block { orientation = spinLeft orientation })
@@ -321,10 +320,10 @@ moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (Position x 
     Yampa.Event $ BlockMove (block { position = (Position (x - 1) y) })
   else if (rightArrow buttons) && (canMoveRight block playFieldState) then
     Yampa.Event $ BlockMove (block { position = (Position (x + 1) y) })
-  else if cannotMoveDown then -- if already bottom, don't check downArrow below
-    Yampa.Event $ BlockMove block
-  else if downArrow buttons then
+  else if downArrow buttons && canMoveDown then
     Yampa.Event $ BlockMove (block { position = (Position x (y + 1)) })
+  else if not canMoveDown then
+    Yampa.Event $ BlockMove block
   else
     Yampa.NoEvent
 
@@ -363,11 +362,12 @@ canMoveTo (block@(PlacedBlock { position = Position x y, blockShape = shape, ori
   let
     intY = floor y
     rows = slice intY (intY + 3) playFieldState
-    augmentedRows = map (\row -> [False] ++ row ++ [False]) rows -- needed to allow 'I' block to go to the edges
+    -- Trues are walls, Falses needed to allow 'I' block to go to the edges
+    augmentedRows = map (\row -> [False, True] ++ row ++ [True, False]) rows
     cells = concatMap (slice (x + 2) (x + 5)) augmentedRows
     blockCells = concat $ get4x4 shape orientation
   in
-  not $ any (\(l, r) -> l && r) (zip cells blockCells)
+  not $ any (\(l, r) -> l && r) (zip (trc "cells" cells) (trc "blockCells" blockCells))
 
 canMoveLeft :: PlacedBlock -> PlayFieldState -> Bool
 canMoveLeft (PlacedBlock { position = NoPosition }) playFieldState = False
