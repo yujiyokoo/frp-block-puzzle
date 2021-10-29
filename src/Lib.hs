@@ -65,7 +65,10 @@ data BlockOrientation
   | Upright
   deriving (Show, Eq)
 
-type BlockPosition = (Int, Float)
+data BlockPosition
+  = Position Int Float
+  | NoPosition
+  deriving (Show, Eq)
 
 type PlayFieldState = [[Bool]]
 
@@ -147,18 +150,21 @@ get4x4 O _ = [ [False, False, False, False], [False, True, True, False], [False,
 get4x4 I _ = [ [False, True, False, False], [False, True, False, False], [False, True, False, False], [False, True, False, False]]
 
 drawBlock :: PlacedBlock -> Renderer -> IO ()
-drawBlock PlacedBlock { blockShape = shape, orientation = orientation, position = (x, y)} renderer =
+drawBlock PlacedBlock { position = NoPosition } _ = return ()
+drawBlock PlacedBlock { blockShape = shape, orientation = orientation, position = Position x y } renderer =
   let
     blockMap = get4x4 shape orientation
     renderRow position (idy, row) = sequence $ map (renderCell (fromIntegral idy)) (indexed row)
-    renderCell idy (idx, blockExists) = when blockExists (drawSquare (x + idx, y + idy) renderer)
+    renderCell idy (idx, blockExists) = when blockExists (drawSquare (Position (x + idx) (y + idy)) renderer)
   in
   sequence_ $ map (renderRow position) (indexed  blockMap)
 
 drawSquare :: BlockPosition -> Renderer -> IO ()
-drawSquare (x, y) renderer = do
+drawSquare NoPosition _ = return ()
+drawSquare (Position x y) renderer = do
   rendererDrawColor renderer $= V4 192 32 32 255
   fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+40)) (fromIntegral ((floor y)*20)))) (V2 20 20)))
+
 
 drawPlayField :: PlayFieldState -> Renderer -> IO ()
 drawPlayField playField renderer = do
@@ -168,7 +174,7 @@ drawPlayField playField renderer = do
         sequence $
           map
             (\(idx, cell) ->
-              when cell (drawSquare (idx - 1, (fromIntegral idy)) renderer)
+              when cell (drawSquare (Position (idx - 1) (fromIntegral idy)) renderer)
             )
             (indexed row)
       )
@@ -191,45 +197,53 @@ buildGameState initialState block =
 data GameEvent
   = Running
   | Quitting
-  | Deleting [Int]
-  | Landing [BlockPosition] PlacedBlock
+  | Deleting [Int] PlacedBlock
+  | Landing [BlockPosition]
   | BlockMove PlacedBlock
   deriving (Show, Eq)
+
+setY :: (BlockPosition, Float) -> BlockPosition
+setY (NoPosition, _) = NoPosition
+setY ((Position x y), dy) = Position x (y + dy)
 
 setBlockPosition :: RandomGen rg => rg -> GameState -> SF ([SDL.Event], GameEvent) GameState
 setBlockPosition rg gs = switch (sf >>> second notYet) cont
   where sf = proc (events, gm) -> do
           let buttonPresses = buttonPressesFrom events
               block = currentBlock gs
-              (x, y) = position $ block
+              pos = position $ block
               (nextBlock, nextRg) = randomBlock rg
           dy <- integral -< (1.0 :: Float)
-          newY <- arr (\(a, b) -> (a + b)) -< (y, dy)
+          newPosition <- arr setY -< (pos, dy)
           -- if there's a full row, mode turns into 'deleting'
-          gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs))
-          landingEvent <- arr landBlock -< (block { position = (x, newY) }, (playFieldState gs), nextBlock)
-          newGameState <- arr (buildGameState gs) -< block { position = (x, newY) }
-          moveEvent <- arr moveBlock -< (nextBlock, buttonPresses, block { position = (x, newY) }, (playFieldState gs))
+          gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs), nextBlock, pos)
+          landingEvent <- arr landBlock -< (block { position = newPosition }, (playFieldState gs))
+          newGameState <- arr (buildGameState gs) -< block { position = newPosition }
+          moveEvent <- arr moveBlock -< (nextBlock, buttonPresses, block { position = newPosition }, (playFieldState gs))
           returnA -< (newGameState, (gameModeEvent `lMerge` landingEvent `lMerge` moveEvent) `attach` nextRg)
-        -- keep blocks at should be represented in Landing [BlockPosition]
         cont (Quitting, rg) =
           setBlockPosition rg (gs { finished = True })
-        cont (Deleting indexes, rg) =
+        cont (Deleting indexes nextBlock, rg) =
           let
             playField = playFieldState gs
             updatedPlayField = (replicate (length indexes) blankRow) ++ (foldr removeRow playField indexes)
-            updatedGameState = gs { playFieldState = updatedPlayField }
+            updatedGameState = gs { playFieldState = updatedPlayField, currentBlock = nextBlock }
           in
-          pause (foldr replaceWithBlankRow gs indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg updatedGameState)
+          pause (foldr replaceWithBlankRow  gs indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg updatedGameState)
         cont (Running, rg) =
           setBlockPosition rg gs
-        cont (Landing positions newBlock, rg) =
-          pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg (foldr placeSquare (gs { currentBlock = newBlock }) positions))
+        cont (Landing positions, rg) =
+          let
+            block = currentBlock gs
+            gsWithHiddenBlock = -- should use Maybe or perhaps custome data type
+              gs { currentBlock = block { position = NoPosition } }
+          in
+          pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg (foldr placeSquare gsWithHiddenBlock positions))
         cont (BlockMove placedBlock, rg) =
           setBlockPosition rg (gs { currentBlock = placedBlock })
 
-computeGameMode :: (ButtonPresses, PlayFieldState) -> Yampa.Event GameEvent
-computeGameMode (bp, field) =
+computeGameMode :: (ButtonPresses, PlayFieldState, BlockShape, BlockPosition) -> Yampa.Event GameEvent
+computeGameMode (bp, field, nextBlock, position) =
   let
     fullRows =
       filter (\(idx, _) -> idx > 1 && idx < 22) $ filter isFullRow (indexed field)
@@ -238,12 +252,15 @@ computeGameMode (bp, field) =
   if quitKey bp then
     Yampa.Event Quitting
   else if fullRows /= [] then
-    Yampa.Event (Deleting (map fst fullRows))
+    Yampa.Event (Deleting (map fst fullRows) (PlacedBlock nextBlock Upright (Position 3 2)))
+  else if position == NoPosition then
+    Yampa.Event (BlockMove (PlacedBlock nextBlock Upright (Position 3 2)))
   else
     Yampa.NoEvent
 
 placeSquare :: BlockPosition -> GameState -> GameState
-placeSquare (x, y) gs =
+placeSquare NoPosition gs = gs
+placeSquare (Position x y) gs =
   let
     intY = floor y
     playField = playFieldState gs
@@ -283,32 +300,34 @@ slice from to xs =
   else
     take (to + 1) xs
 
-landBlock :: (PlacedBlock, PlayFieldState, BlockShape) -> Yampa.Event GameEvent
-landBlock (block@(PlacedBlock { position = (x, y) }), playFieldState, nextBlock) =
+landBlock :: (PlacedBlock, PlayFieldState) -> Yampa.Event GameEvent
+landBlock (PlacedBlock { position = NoPosition }, playFieldState) = Yampa.NoEvent
+landBlock (block@(PlacedBlock { position = Position x y }), playFieldState) =
   let
     blockStopped = not $ canMoveTo block playFieldState
     landingBlocks = blocksToKeep blockStopped block
   in
   if blockStopped then
-    Yampa.Event (Landing landingBlocks (PlacedBlock nextBlock Upright (3, 2)))
+    Yampa.Event (Landing landingBlocks)
   else
     Yampa.NoEvent
 
 moveBlock :: (BlockShape, ButtonPresses, PlacedBlock, PlayFieldState) -> Yampa.Event GameEvent
-moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (x, y) }), playFieldState) =
+moveBlock (_, _, PlacedBlock { position = NoPosition }, _) = Yampa.NoEvent
+moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (Position x y) }), playFieldState) =
   let
-    cannotMoveDown = not $ canMoveTo (block { position = (x, y + 1) }) playFieldState
+    cannotMoveDown = not $ canMoveTo (block { position = (Position x (y + 1)) }) playFieldState
     (newX, newY, (newShape, newOrientation)) =
         (x, y, (blockShape block, orientation block))
   in
   if (leftArrow buttons) && (canMoveLeft block playFieldState) then
-    Yampa.Event $ BlockMove (block { position = (newX - 1, newY), blockShape = newShape, orientation = newOrientation })
+    Yampa.Event $ BlockMove (block { position = (Position (newX - 1) newY), blockShape = newShape, orientation = newOrientation })
   else if (rightArrow buttons) && (canMoveRight block playFieldState) then
-    Yampa.Event $ BlockMove (block { position = (newX + 1, newY), blockShape = newShape, orientation = newOrientation })
+    Yampa.Event $ BlockMove (block { position = (Position (newX + 1) newY), blockShape = newShape, orientation = newOrientation })
   else if cannotMoveDown then -- if already bottom, don't check downArrow below
-    Yampa.Event $ BlockMove (block { position = (newX, newY), blockShape = newShape, orientation = newOrientation })
+    Yampa.Event $ BlockMove (block { position = (Position newX newY), blockShape = newShape, orientation = newOrientation })
   else if downArrow buttons then
-    Yampa.Event $ BlockMove (block { position = (newX, newY + 1), blockShape = newShape, orientation = newOrientation })
+    Yampa.Event $ BlockMove (block { position = (Position newX (newY + 1)), blockShape = newShape, orientation = newOrientation })
   else
     Yampa.NoEvent
 
@@ -326,7 +345,8 @@ randomBlock rg =
 
 
 blocksToKeep :: Bool -> PlacedBlock -> [BlockPosition]
-blocksToKeep blockStopped block@(PlacedBlock { position = (x, overlappingY), blockShape = shape, orientation = orientation }) =
+blocksToKeep blockStopped (PlacedBlock { position = NoPosition }) = []
+blocksToKeep blockStopped block@(PlacedBlock { position = Position x overlappingY, blockShape = shape, orientation = orientation }) =
   let
     y = overlappingY - 1
     blockMap = get4x4 shape orientation
@@ -334,7 +354,7 @@ blocksToKeep blockStopped block@(PlacedBlock { position = (x, overlappingY), blo
   if blockStopped then
     concatMap (\(idy, row) ->
       map (\(idx, _) ->
-        (x + idx, y + (fromIntegral idy))
+        Position (x + idx) (y + (fromIntegral idy))
       ) (filter (\(_, v) -> v)
         (indexed row)
       )
@@ -343,7 +363,8 @@ blocksToKeep blockStopped block@(PlacedBlock { position = (x, overlappingY), blo
     []
 
 canMoveTo :: PlacedBlock -> PlayFieldState -> Bool
-canMoveTo (block@(PlacedBlock { position = (x, y), blockShape = shape, orientation = orientation })) playFieldState =
+canMoveTo (PlacedBlock { position = NoPosition }) playFieldState = False
+canMoveTo (block@(PlacedBlock { position = Position x y, blockShape = shape, orientation = orientation })) playFieldState =
   let
     intY = floor y
     rows = slice intY (intY + 3) playFieldState
@@ -353,19 +374,21 @@ canMoveTo (block@(PlacedBlock { position = (x, y), blockShape = shape, orientati
   not $ any (\(l, r) -> l && r) (zip cells blockCells)
 
 canMoveLeft :: PlacedBlock -> PlayFieldState -> Bool
-canMoveLeft (block@(PlacedBlock { position = (x, y) })) playFieldState =
-  canMoveTo (block { position = (x - 1, y) }) playFieldState
+canMoveLeft (PlacedBlock { position = NoPosition }) playFieldState = False
+canMoveLeft (block@(PlacedBlock { position = Position x y })) playFieldState =
+  canMoveTo (block { position = Position (x - 1) y }) playFieldState
 
 canMoveRight :: PlacedBlock -> PlayFieldState -> Bool
-canMoveRight (block@(PlacedBlock { position = (x, y) })) playFieldState =
-  canMoveTo (block { position = (x + 1, y) }) playFieldState
+canMoveRight (PlacedBlock { position = NoPosition }) playFieldState = False
+canMoveRight (block@(PlacedBlock { position = Position x y })) playFieldState =
+  canMoveTo (block { position = Position (x + 1) y }) playFieldState
 
 defaultBlock :: PlacedBlock
 defaultBlock =
   PlacedBlock
     { blockShape = O
     , orientation = Upright
-    , position = (2, 2)
+    , position = Position 2 2
     }
 
 initScreen :: IO Renderer
