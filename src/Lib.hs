@@ -59,10 +59,10 @@ data BlockShape
   deriving (Show, Eq)
 
 data BlockOrientation
-  = LeftTilt
-  | UpsideDown
-  | RightTilt
-  | Upright
+  = Deg0
+  | Deg90
+  | Deg180
+  | Deg270
   deriving (Show, Eq)
 
 data BlockPosition
@@ -145,10 +145,6 @@ output renderer _ gs = do
   when (finished gs) (putStrLn "Done")
   return (finished gs)
 
-get4x4 :: BlockShape -> BlockOrientation -> [[Bool]]
-get4x4 O _ = [ [False, False, False, False], [False, True, True, False], [False, True, True, False], [False, False, False, False]]
-get4x4 I _ = [ [False, True, False, False], [False, True, False, False], [False, True, False, False], [False, True, False, False]]
-
 drawBlock :: PlacedBlock -> Renderer -> IO ()
 drawBlock PlacedBlock { position = NoPosition } _ = return ()
 drawBlock PlacedBlock { blockShape = shape, orientation = orientation, position = Position x y } renderer =
@@ -215,7 +211,6 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
               (nextBlock, nextRg) = randomBlock rg
           dy <- integral -< (1.0 :: Float)
           newPosition <- arr setY -< (pos, dy)
-          -- if there's a full row, mode turns into 'deleting'
           gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs), nextBlock, pos)
           landingEvent <- arr landBlock -< (block { position = newPosition }, (playFieldState gs))
           newGameState <- arr (buildGameState gs) -< block { position = newPosition }
@@ -235,7 +230,7 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
         cont (Landing positions, rg) =
           let
             block = currentBlock gs
-            gsWithHiddenBlock = -- should use Maybe or perhaps custome data type
+            gsWithHiddenBlock =
               gs { currentBlock = block { position = NoPosition } }
           in
           pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg (foldr placeSquare gsWithHiddenBlock positions))
@@ -252,9 +247,9 @@ computeGameMode (bp, field, nextBlock, position) =
   if quitKey bp then
     Yampa.Event Quitting
   else if fullRows /= [] then
-    Yampa.Event (Deleting (map fst fullRows) (PlacedBlock nextBlock Upright (Position 3 2)))
+    Yampa.Event (Deleting (map fst fullRows) (PlacedBlock nextBlock Deg0 (Position 3 2)))
   else if position == NoPosition then
-    Yampa.Event (BlockMove (PlacedBlock nextBlock Upright (Position 3 2)))
+    Yampa.Event (BlockMove (PlacedBlock nextBlock Deg0 (Position 3 2)))
   else
     Yampa.NoEvent
 
@@ -314,20 +309,22 @@ landBlock (block@(PlacedBlock { position = Position x y }), playFieldState) =
 
 moveBlock :: (BlockShape, ButtonPresses, PlacedBlock, PlayFieldState) -> Yampa.Event GameEvent
 moveBlock (_, _, PlacedBlock { position = NoPosition }, _) = Yampa.NoEvent
-moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (Position x y) }), playFieldState) =
+moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (Position x y), blockShape = shape, orientation = orientation }), playFieldState) =
   let
     cannotMoveDown = not $ canMoveTo (block { position = (Position x (y + 1)) }) playFieldState
-    (newX, newY, (newShape, newOrientation)) =
-        (x, y, (blockShape block, orientation block))
   in
-  if (leftArrow buttons) && (canMoveLeft block playFieldState) then
-    Yampa.Event $ BlockMove (block { position = (Position (newX - 1) newY), blockShape = newShape, orientation = newOrientation })
+  if (rotateL buttons) && (canRotateL block playFieldState) then
+    Yampa.Event $ BlockMove (block { orientation = spinLeft orientation })
+  else if (rotateR buttons) && (canRotateR block playFieldState) then
+    Yampa.Event $ BlockMove (block { orientation = spinRight orientation })
+  else if (leftArrow buttons) && (canMoveLeft block playFieldState) then
+    Yampa.Event $ BlockMove (block { position = (Position (x - 1) y) })
   else if (rightArrow buttons) && (canMoveRight block playFieldState) then
-    Yampa.Event $ BlockMove (block { position = (Position (newX + 1) newY), blockShape = newShape, orientation = newOrientation })
+    Yampa.Event $ BlockMove (block { position = (Position (x + 1) y) })
   else if cannotMoveDown then -- if already bottom, don't check downArrow below
-    Yampa.Event $ BlockMove (block { position = (Position newX newY), blockShape = newShape, orientation = newOrientation })
+    Yampa.Event $ BlockMove block
   else if downArrow buttons then
-    Yampa.Event $ BlockMove (block { position = (Position newX (newY + 1)), blockShape = newShape, orientation = newOrientation })
+    Yampa.Event $ BlockMove (block { position = (Position x (y + 1)) })
   else
     Yampa.NoEvent
 
@@ -341,8 +338,6 @@ randomBlock rg =
     (I, newRg)
   else
     (O, newRg)
-
-
 
 blocksToKeep :: Bool -> PlacedBlock -> [BlockPosition]
 blocksToKeep blockStopped (PlacedBlock { position = NoPosition }) = []
@@ -368,7 +363,8 @@ canMoveTo (block@(PlacedBlock { position = Position x y, blockShape = shape, ori
   let
     intY = floor y
     rows = slice intY (intY + 3) playFieldState
-    cells = concatMap (slice (x + 1) (x + 4)) rows
+    augmentedRows = map (\row -> [False] ++ row ++ [False]) rows -- needed to allow 'I' block to go to the edges
+    cells = concatMap (slice (x + 2) (x + 5)) augmentedRows
     blockCells = concat $ get4x4 shape orientation
   in
   not $ any (\(l, r) -> l && r) (zip cells blockCells)
@@ -383,11 +379,32 @@ canMoveRight (PlacedBlock { position = NoPosition }) playFieldState = False
 canMoveRight (block@(PlacedBlock { position = Position x y })) playFieldState =
   canMoveTo (block { position = Position (x + 1) y }) playFieldState
 
+canRotateL :: PlacedBlock -> PlayFieldState -> Bool
+canRotateL (block@(PlacedBlock { orientation = orientation })) playFieldState =
+  canMoveTo (block { orientation = spinLeft orientation }) playFieldState
+
+canRotateR :: PlacedBlock -> PlayFieldState -> Bool
+canRotateR (block@(PlacedBlock { orientation = orientation })) playFieldState =
+  canMoveTo (block { orientation = spinRight orientation }) playFieldState
+
+
+spinLeft :: BlockOrientation -> BlockOrientation
+spinLeft Deg0 = Deg90
+spinLeft Deg90 = Deg180
+spinLeft Deg180 = Deg270
+spinLeft Deg270 = Deg0
+
+spinRight :: BlockOrientation -> BlockOrientation
+spinRight Deg0 = Deg270
+spinRight Deg90 = Deg0
+spinRight Deg180 = Deg90
+spinRight Deg270 = Deg180
+
 defaultBlock :: PlacedBlock
 defaultBlock =
   PlacedBlock
     { blockShape = O
-    , orientation = Upright
+    , orientation = Deg0
     , position = Position 2 2
     }
 
@@ -398,4 +415,36 @@ initScreen = do
   renderer <- createRenderer window (-1) defaultRenderer
   return renderer
 
+
+get4x4 :: BlockShape -> BlockOrientation -> [[Bool]]
+get4x4 O _ =
+  [ [False, True, True, False]
+  , [False, True, True, False]
+  , [False, False, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 I Deg0 =
+  [ [False, True, False, False]
+  , [False, True, False, False]
+  , [False, True, False, False]
+  , [False, True, False, False]
+  ]
+get4x4 I Deg90 =
+  [ [False, False, False, False]
+  , [False, False, False, False]
+  , [True, True, True, True]
+  , [False, False, False, False]
+  ]
+get4x4 I Deg180 =
+  [ [False, False, True, False]
+  , [False, False, True, False]
+  , [False, False, True, False]
+  , [False, False, True, False]
+  ]
+get4x4 I Deg270 =
+  [ [False, False, False, False]
+  , [True, True, True, True]
+  , [False, False, False, False]
+  , [False, False, False, False]
+  ]
 
