@@ -131,12 +131,10 @@ scancodeOf ked =
 
 output :: Renderer -> Bool -> GameState -> IO Bool
 output renderer _ gs = do
-  events <- pollEvents
   rendererDrawColor renderer $= V4 32 32 32 255
   clear renderer
   drawPlayField (playFieldState gs) renderer
   drawBlock (currentBlock gs) renderer
-  -- drawSquare (position $ currentBlock gs) renderer
   drawBorders renderer
   present renderer
   currTime <- getCurrentTime
@@ -175,9 +173,9 @@ drawPlayField playField renderer = do
       (indexed playField)
 
 drawBorders :: Renderer -> IO ()
-drawBorders renderer =
-  let playFieldRect = Rectangle (P (V2 40 40)) (V2 200 400)
-  in
+drawBorders renderer = do
+  let playFieldRect = Rectangle (P (V2 39 39)) (V2 201 401)
+  rendererDrawColor renderer $= V4 192 32 32 255
   drawRect renderer (Just playFieldRect)
 
 process :: RandomGen rg => rg -> GameState -> SF [SDL.Event] GameState
@@ -222,7 +220,7 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
             updatedPlayField = (replicate (length indexes) blankRow) ++ (foldr removeRow playField indexes)
             updatedGameState = gs { playFieldState = updatedPlayField, currentBlock = nextBlock }
           in
-          pause (foldr replaceWithBlankRow  gs indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg updatedGameState)
+          pause (foldr replaceWithBlankRow gs indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg updatedGameState)
         cont (Running, rg) =
           setBlockPosition rg gs
         cont (Landing positions, rg) =
@@ -366,7 +364,7 @@ canMoveTo (block@(PlacedBlock { position = Position x y, blockShape = shape, ori
     cells = concatMap (slice (x + 2) (x + 5)) augmentedRows
     blockCells = concat $ get4x4 shape orientation
   in
-  not $ any (\(l, r) -> l && r) (zip (trc "cells" cells) (trc "blockCells" blockCells))
+  not $ any (\(l, r) -> l && r) (zip cells blockCells)
 
 canMoveLeft :: PlacedBlock -> PlayFieldState -> Bool
 canMoveLeft (PlacedBlock { position = NoPosition }) playFieldState = False
