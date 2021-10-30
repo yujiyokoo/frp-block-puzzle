@@ -22,9 +22,12 @@ data GameState = GameState
   , playFieldState :: PlayFieldState
   }
 
-initialGameState :: GameState
-initialGameState =
-  GameState False defaultBlock initialPlayFieldState
+initialGameState :: BlockShape -> GameState
+initialGameState shape =
+  let
+    initialBlock = PlacedBlock shape Deg0 (Position 3 2)
+  in
+  GameState False initialBlock initialPlayFieldState
 
 data ButtonPresses = ButtonPresses
   { upArrow :: Bool
@@ -81,10 +84,12 @@ blankRow = replicate 10 False
 
 runGame :: RandomGen rg => rg -> IO ()
 runGame rg = do
+  let
+    (blockShape, newRg) = randomBlock rg
   renderer <- initScreen
   t <- getCurrentTime
   timeRef <- newIORef (t, t)
-  reactimate initialise (input timeRef) (output renderer) (process rg initialGameState)
+  reactimate initialise (input timeRef) (output renderer) (process newRg (initialGameState blockShape))
 
 initialise :: IO [SDL.Event]
 initialise = do
@@ -396,14 +401,6 @@ spinRight Deg0 = Deg270
 spinRight Deg90 = Deg0
 spinRight Deg180 = Deg90
 spinRight Deg270 = Deg180
-
-defaultBlock :: PlacedBlock
-defaultBlock =
-  PlacedBlock
-    { blockShape = O
-    , orientation = Deg0
-    , position = Position 2 2
-    }
 
 initScreen :: IO Renderer
 initScreen = do
