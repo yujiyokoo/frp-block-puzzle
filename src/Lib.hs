@@ -61,6 +61,11 @@ data PlacedBlock = PlacedBlock
 data BlockShape
   = O
   | I
+  | J
+  | L
+  | S
+  | T
+  | Z
   deriving (Show, Eq)
 
 data BlockOrientation
@@ -351,16 +356,20 @@ moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (Position x 
   else
     Yampa.NoEvent
 
--- TODO: Stop hard coding range... count enum?
+-- TODO: Can I stop hard coding range... maybe count sum type?
 randomBlock :: RandomGen rg => rg -> (BlockShape, rg)
 randomBlock rg =
   let
-    (i, newRg) = randomR (0::Int, 1::Int) rg
+    (i, newRg) = randomR (0::Int, 6::Int) rg
   in
-  if i == 0 then
-    (I, newRg)
-  else
-    (O, newRg)
+  case i of
+    0 -> (O, newRg)
+    1 -> (I, newRg)
+    2 -> (J, newRg)
+    3 -> (L, newRg)
+    4 -> (S, newRg)
+    5 -> (T, newRg)
+    6 -> (Z, newRg)
 
 blocksToKeep :: Bool -> PlacedBlock -> [BlockPosition]
 blocksToKeep blockStopped (PlacedBlock { position = NoPosition }) = []
@@ -470,6 +479,7 @@ get4x4 O _ =
   , [False, False, False, False]
   , [False, False, False, False]
   ]
+
 get4x4 I Deg0 =
   [ [False, True, False, False]
   , [False, True, False, False]
@@ -495,3 +505,127 @@ get4x4 I Deg270 =
   , [False, False, False, False]
   ]
 
+get4x4 J Deg0 =
+  [ [True, False, False, False]
+  , [True, True, True, False]
+  , [False, False, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 J Deg90 =
+  [ [False, True, True, False]
+  , [False, True, False, False]
+  , [False, True, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 J Deg180 =
+  [ [False, False, False, False]
+  , [True, True, True, False]
+  , [False, False, True, False]
+  , [False, False, False, False]
+  ]
+get4x4 J Deg270 =
+  [ [False, True, False, False]
+  , [False, True, False, False]
+  , [True, True, False, False]
+  , [False, False, False, False]
+  ]
+
+get4x4 L Deg0 =
+  [ [False, False, True, False]
+  , [True, True, True, False]
+  , [False, False, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 L Deg90 =
+  [ [False, True, False, False]
+  , [False, True, False, False]
+  , [False, True, True, False]
+  , [False, False, False, False]
+  ]
+get4x4 L Deg180 =
+  [ [False, False, False, False]
+  , [True, True, True, False]
+  , [True, False, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 L Deg270 =
+  [ [True, True, False, False]
+  , [False, True, False, False]
+  , [False, True, False, False]
+  , [False, False, False, False]
+  ]
+
+get4x4 S Deg0 =
+  [ [False, True, True, False]
+  , [True, True, False, False]
+  , [False, False, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 S Deg90 =
+  [ [False, True, False, False]
+  , [False, True, True, False]
+  , [False, False, True, False]
+  , [False, False, False, False]
+  ]
+get4x4 S Deg180 =
+  [ [False, False, False, False]
+  , [False, True, True, False]
+  , [True, True, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 S Deg270 =
+  [ [True, False, False, False]
+  , [True, True, False, False]
+  , [False, True, False, False]
+  , [False, False, False, False]
+  ]
+
+get4x4 T Deg0 =
+  [ [False, True, False, False]
+  , [True, True, True, False]
+  , [False, False, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 T Deg90 =
+  [ [False, True, False, False]
+  , [False, True, True, False]
+  , [False, True, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 T Deg180 =
+  [ [False, False, False, False]
+  , [True, True, True, False]
+  , [False, True, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 T Deg270 =
+  [ [False, True, False, False]
+  , [True, True, False, False]
+  , [False, True, False, False]
+  , [False, False, False, False]
+  ]
+
+get4x4 Z Deg0 =
+  [ [True, True, False, False]
+  , [False, True, True, False]
+  , [False, False, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 Z Deg90 =
+  [ [False, False, True, False]
+  , [False, True, True, False]
+  , [False, True, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 Z Deg180 =
+  [ [False, False, False, False]
+  , [True, True, False, False]
+  , [False, True, True, False]
+  , [False, False, False, False]
+  ]
+get4x4 Z Deg270 =
+  [ [False, True, False, False]
+  , [True, True, False, False]
+  , [True, False, False, False]
+  , [False, False, False, False]
+  ]
