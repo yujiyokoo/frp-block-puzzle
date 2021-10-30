@@ -14,12 +14,14 @@ import Data.Maybe (fromMaybe)
 import FRP.Yampa as Yampa
 import SDL as SDL
 import SDL.Vect
+import Data.Vector.Storable (fromList)
 import Debug.Trace
 
 data GameState = GameState
   { finished :: Bool
   , currentBlock :: PlacedBlock
   , playFieldState :: PlayFieldState
+  , score :: Int
   }
 
 initialGameState :: BlockShape -> GameState
@@ -27,7 +29,7 @@ initialGameState shape =
   let
     initialBlock = PlacedBlock shape Deg0 (Position 3 2)
   in
-  GameState False initialBlock initialPlayFieldState
+  GameState False initialBlock initialPlayFieldState 0
 
 data ButtonPresses = ButtonPresses
   { upArrow :: Bool
@@ -141,10 +143,23 @@ output renderer _ gs = do
   drawPlayField (playFieldState gs) renderer
   drawBlock (currentBlock gs) renderer
   drawBorders renderer
+  renderScore ((score gs) * 100) renderer
   present renderer
   currTime <- getCurrentTime
   when (finished gs) (putStrLn "Done")
   return (finished gs)
+
+renderScore :: Int -> Renderer -> IO ()
+renderScore score renderer =
+  let
+    digits = show score
+    len = length digits
+    start = (14 - len)
+  in
+  do
+    rendererDrawColor renderer $= V4 192 32 32 255
+    sequence_ $
+      map (drawDigit start renderer) (indexed digits)
 
 drawBlock :: PlacedBlock -> Renderer -> IO ()
 drawBlock PlacedBlock { position = NoPosition } _ = return ()
@@ -221,9 +236,16 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
           setBlockPosition rg (gs { finished = True })
         cont (Deleting indexes nextBlock, rg) =
           let
+            len = length indexes
+            calcScore indexes = case len of
+              0 -> 0
+              1 -> 1
+              2 -> 3
+              3 -> 5
+              4 -> 8
             playField = playFieldState gs
-            updatedPlayField = (replicate (length indexes) blankRow) ++ (foldr removeRow playField indexes)
-            updatedGameState = gs { playFieldState = updatedPlayField, currentBlock = nextBlock }
+            updatedPlayField = (replicate len blankRow) ++ (foldr removeRow playField indexes)
+            updatedGameState = gs { playFieldState = updatedPlayField, currentBlock = nextBlock, score = (score gs) + calcScore indexes}
           in
           pause (foldr replaceWithBlankRow gs indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg updatedGameState)
         cont (Running, rg) =
@@ -410,6 +432,37 @@ initScreen = do
   return renderer
 
 
+-- digits below
+drawDigit :: Int -> Renderer -> (Int, Char) -> IO ()
+drawDigit start renderer (idx, num) =
+  drawNum num ((start + idx) * 20) 10 renderer
+
+fI = fromIntegral
+drawNum :: Char -> Int -> Int -> Renderer -> IO ()
+drawNum '0' x y renderer =
+  drawRect renderer (Just (Rectangle (P (V2 (fI x + 4) (fI y + 2))) (V2 11 15)))
+drawNum '1' x y renderer =
+  drawLines renderer (fromList [(P (V2 (fI x + 6) (fI y + 4))), (P (V2 (fI x + 11) (fI y + 2))), (P (V2 (fI x + 11) (fI y + 16)))])
+drawNum '2' x y renderer =
+  drawLines renderer (fromList [(P (V2 (fI x + 4) (fI y + 2))), (P (V2 (fI x + 16) (fI y + 2))), (P (V2 (fI x + 16) (fI y + 8))), (P (V2 (fI x + 4) (fI y + 8))), (P (V2 (fI x + 4) (fI y + 16))), (P (V2 (fI x + 16) (fI y + 16)))])
+drawNum '3' x y renderer =
+  drawLines renderer (fromList [(P (V2 (fI x + 4) (fI y + 2))), (P (V2 (fI x + 16) (fI y + 2))), (P (V2 (fI x + 16) (fI y + 8))), (P (V2 (fI x + 4) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 16))), (P (V2 (fI x + 4) (fI y + 16)))])
+drawNum '4' x y renderer =
+  drawLines renderer (fromList [(P (V2 (fI x + 15) (fI y + 10))), (P (V2 (fI x + 3) (fI y + 10))), (P (V2 (fI x + 11) (fI y + 2))), (P (V2 (fI x + 11) (fI y + 16)))])
+drawNum '5' x y renderer =
+  drawLines renderer (fromList [(P (V2 (fI x + 16) (fI y + 2))), (P (V2 (fI x + 4) (fI y + 2))), (P (V2 (fI x + 4) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 16))), (P (V2 (fI x + 4) (fI y + 16)))])
+drawNum '6' x y renderer =
+  drawLines renderer (fromList [(P (V2 (fI x + 16) (fI y + 2))), (P (V2 (fI x + 4) (fI y + 2))), (P (V2 (fI x + 4) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 16))), (P (V2 (fI x + 4) (fI y + 16))), (P (V2 (fI x + 4) (fI y + 8)))])
+drawNum '7' x y renderer =
+  drawLines renderer (fromList [(P (V2 (fI x + 4) (fI y + 2))), (P (V2 (fI x + 16) (fI y + 2))), (P (V2 (fI x + 6) (fI y + 16)))])
+drawNum '8' x y renderer =
+  drawLines renderer (fromList [(P (V2 (fI x + 16) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 2))), (P (V2 (fI x + 4) (fI y + 2))), (P (V2 (fI x + 4) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 16))), (P (V2 (fI x + 4) (fI y + 16))), (P (V2 (fI x + 4) (fI y + 8)))])
+drawNum '9' x y renderer =
+  drawLines renderer (fromList [(P (V2 (fI x + 16) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 2))), (P (V2 (fI x + 4) (fI y + 2))), (P (V2 (fI x + 4) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 8))), (P (V2 (fI x + 16) (fI y + 16))), (P (V2 (fI x + 4) (fI y + 16)))])
+drawNum _ x y renderer =
+  fillRect renderer (Just (Rectangle (P (V2 (fI x + 4) (fI y + 2))) (V2 12 16)))
+
+-- block shapes below
 get4x4 :: BlockShape -> BlockOrientation -> [[Bool]]
 get4x4 O _ =
   [ [False, True, True, False]

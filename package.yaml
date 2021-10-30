@@ -27,6 +27,7 @@ dependencies:
 - listsafe
 - ilist
 - random
+- vector
 
 library:
   source-dirs: src
