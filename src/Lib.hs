@@ -74,8 +74,7 @@ type PlayFieldState = [[Bool]]
 
 -- play field is 20 x 10. There are extra rows at the top (think row -1 and -2)
 initialPlayFieldState :: PlayFieldState
-initialPlayFieldState =
-  ((replicate 22 $ blankRow) ++ [(replicate 12 True)])
+initialPlayFieldState = replicate 22 blankRow
 
 blankRow :: [Bool]
 blankRow = replicate 10 False
@@ -361,7 +360,7 @@ canMoveTo (PlacedBlock { position = NoPosition }) playFieldState = False
 canMoveTo (block@(PlacedBlock { position = Position x y, blockShape = shape, orientation = orientation })) playFieldState =
   let
     intY = floor y
-    rows = slice intY (intY + 3) playFieldState
+    rows = slice intY (intY + 3) (playFieldState ++ [(replicate 10 True)]) -- adding the floor (10 Trues)
     -- Trues are walls, Falses needed to allow 'I' block to go to the edges
     augmentedRows = map (\row -> [False, True] ++ row ++ [True, False]) rows
     cells = concatMap (slice (x + 2) (x + 5)) augmentedRows
