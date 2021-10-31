@@ -269,7 +269,7 @@ computeGameMode (bp, field, nextBlock, position) =
   let
     fullRows =
       filter (\(idx, _) -> idx > 1 && idx < 22) $ filter isFullRow (indexed field)
-    isFullRow (_, list) = all id (slice 1 10 list)
+    isFullRow (_, list) = all id (slice 0 9 list)
   in
   if quitKey bp then
     Yampa.Event Quitting
