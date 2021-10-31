@@ -20,16 +20,17 @@ import Debug.Trace
 data GameState = GameState
   { finished :: Bool
   , currentBlock :: PlacedBlock
+  , nextBlockShape :: BlockShape
   , playFieldState :: PlayFieldState
   , score :: Int
   }
 
-initialGameState :: BlockShape -> GameState
-initialGameState shape =
+initialGameState :: BlockShape -> BlockShape -> GameState
+initialGameState shape nextShape =
   let
     initialBlock = PlacedBlock shape Deg0 (Position 3 2)
   in
-  GameState False initialBlock initialPlayFieldState 0
+  GameState False initialBlock nextShape initialPlayFieldState 0
 
 data ButtonPresses = ButtonPresses
   { downArrow :: Bool
@@ -91,11 +92,12 @@ blankRow = replicate 10 False
 runGame :: RandomGen rg => rg -> IO ()
 runGame rg = do
   let
-    (blockShape, newRg) = randomBlock rg
+    (blockShape, rg') = randomBlock rg
+    (nextBlockShape, newRg) = randomBlock rg'
   renderer <- initScreen
   t <- getCurrentTime
   timeRef <- newIORef (t, t)
-  reactimate initialise (input timeRef) (output renderer) (process newRg (initialGameState blockShape))
+  reactimate initialise (input timeRef) (output renderer) (process newRg (initialGameState blockShape nextBlockShape))
 
 initialise :: IO [SDL.Event]
 initialise = do
@@ -148,6 +150,7 @@ output renderer _ gs = do
   drawBlock (currentBlock gs) renderer
   drawBorders renderer
   renderScore ((score gs) * 100) renderer
+  renderNextBlock (nextBlockShape gs) renderer
   present renderer
   currTime <- getCurrentTime
   when (finished gs) (putStrLn "Done")
@@ -164,6 +167,10 @@ renderScore score renderer =
     rendererDrawColor renderer $= V4 192 32 32 255
     sequence_ $
       map (drawDigit start renderer) (indexed digits)
+
+renderNextBlock :: BlockShape -> Renderer -> IO ()
+renderNextBlock shape renderer =
+  drawBlock (PlacedBlock { blockShape = shape, orientation = Deg0, position = Position 14 4 }) renderer
 
 drawBlock :: PlacedBlock -> Renderer -> IO ()
 drawBlock PlacedBlock { position = NoPosition } _ = return ()
@@ -213,7 +220,7 @@ buildGameState initialState block =
 data GameEvent
   = Running
   | Quitting
-  | Deleting [Int] PlacedBlock
+  | Deleting [Int]
   | Landing [BlockPosition]
   | BlockMove PlacedBlock
   deriving (Show, Eq)
@@ -228,17 +235,16 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
           let buttonPresses = buttonPressesFrom events
               block = currentBlock gs
               pos = position $ block
-              (nextBlock, nextRg) = randomBlock rg
           dy <- integral -< (1.0 :: Float)
           newPosition <- arr setY -< (pos, dy)
-          gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs), nextBlock, pos)
+          gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs), blockShape block, pos)
           landingEvent <- arr landBlock -< (block { position = newPosition }, (playFieldState gs))
           newGameState <- arr (buildGameState gs) -< block { position = newPosition }
-          moveEvent <- arr moveBlock -< (nextBlock, buttonPresses, block { position = newPosition }, (playFieldState gs))
-          returnA -< (newGameState, (gameModeEvent `lMerge` landingEvent `lMerge` moveEvent) `attach` nextRg)
+          moveEvent <- arr moveBlock -< (buttonPresses, block { position = newPosition }, (playFieldState gs))
+          returnA -< (newGameState, (gameModeEvent `lMerge` landingEvent `lMerge` moveEvent) `attach` rg)
         cont (Quitting, rg) =
           setBlockPosition rg (gs { finished = True })
-        cont (Deleting indexes nextBlock, rg) =
+        cont (Deleting indexes, rg) =
           let
             len = length indexes
             calcScore indexes = case len of
@@ -249,7 +255,7 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
               4 -> 8
             playField = playFieldState gs
             updatedPlayField = (replicate len blankRow) ++ (foldr removeRow playField indexes)
-            updatedGameState = gs { playFieldState = updatedPlayField, currentBlock = nextBlock, score = (score gs) + calcScore indexes}
+            updatedGameState = gs { playFieldState = updatedPlayField, score = (score gs) + calcScore indexes}
           in
           pause (foldr replaceWithBlankRow gs indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg updatedGameState)
         cont (Running, rg) =
@@ -257,15 +263,17 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
         cont (Landing positions, rg) =
           let
             block = currentBlock gs
+            newShape = nextBlockShape gs
+            (newNextBlock, rg') = randomBlock rg
             gsWithHiddenBlock =
-              gs { currentBlock = block { position = NoPosition } }
+              gs { currentBlock = block { blockShape = newShape, position = NoPosition }, nextBlockShape = newNextBlock }
           in
-          pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg (foldr placeSquare gsWithHiddenBlock positions))
+          pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg' (foldr placeSquare gsWithHiddenBlock positions))
         cont (BlockMove placedBlock, rg) =
           setBlockPosition rg (gs { currentBlock = placedBlock })
 
 computeGameMode :: (ButtonPresses, PlayFieldState, BlockShape, BlockPosition) -> Yampa.Event GameEvent
-computeGameMode (bp, field, nextBlock, position) =
+computeGameMode (bp, field, shape, position) =
   let
     fullRows =
       filter (\(idx, _) -> idx > 1 && idx < 22) $ filter isFullRow (indexed field)
@@ -274,9 +282,9 @@ computeGameMode (bp, field, nextBlock, position) =
   if quitKey bp then
     Yampa.Event Quitting
   else if fullRows /= [] then
-    Yampa.Event (Deleting (map fst fullRows) (PlacedBlock nextBlock Deg0 (Position 3 2)))
+    Yampa.Event (Deleting (map fst fullRows))
   else if position == NoPosition then
-    Yampa.Event (BlockMove (PlacedBlock nextBlock Deg0 (Position 3 2)))
+    Yampa.Event (BlockMove (PlacedBlock shape Deg0 (Position 3 2)))
   else
     Yampa.NoEvent
 
@@ -334,9 +342,9 @@ landBlock (block@(PlacedBlock { position = Position x y }), playFieldState) =
   else
     Yampa.NoEvent
 
-moveBlock :: (BlockShape, ButtonPresses, PlacedBlock, PlayFieldState) -> Yampa.Event GameEvent
-moveBlock (_, _, PlacedBlock { position = NoPosition }, _) = Yampa.NoEvent
-moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (Position x y), blockShape = shape, orientation = orientation }), playFieldState) =
+moveBlock :: (ButtonPresses, PlacedBlock, PlayFieldState) -> Yampa.Event GameEvent
+moveBlock (_, PlacedBlock { position = NoPosition }, _) = Yampa.NoEvent
+moveBlock (buttons, block@(PlacedBlock { position = (Position x y), blockShape = shape, orientation = orientation }), playFieldState) =
   let
     canMoveDown = canMoveTo (block { position = (Position x (y + 1)) }) playFieldState
     hardDroppedPosition = calcDroppedPosition playFieldState (Position x y)
