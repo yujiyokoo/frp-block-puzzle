@@ -23,6 +23,7 @@ data GameState = GameState
   , nextBlockShape :: BlockShape
   , playFieldState :: PlayFieldState
   , score :: Int
+  , speed :: Float
   }
 
 initialGameState :: BlockShape -> BlockShape -> GameState
@@ -30,7 +31,7 @@ initialGameState shape nextShape =
   let
     initialBlock = PlacedBlock shape Deg0 (Position 3 2)
   in
-  GameState False initialBlock nextShape initialPlayFieldState 0
+  GameState False initialBlock nextShape initialPlayFieldState 0 1.0
 
 data ButtonPresses = ButtonPresses
   { downArrow :: Bool
@@ -250,7 +251,7 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
           let buttonPresses = buttonPressesFrom events
               block = currentBlock gs
               pos = position $ block
-          dy <- integral -< (1.0 :: Float)
+          dy <- integral -< speed gs
           newPosition <- arr setY -< (pos, dy)
           gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs), block)
           landingEvent <- arr landBlock -< (block { position = newPosition }, (playFieldState gs))
@@ -270,7 +271,7 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
               4 -> 8
             playField = playFieldState gs
             updatedPlayField = (replicate len blankRow) ++ (foldr removeRow playField indexes)
-            updatedGameState = gs { playFieldState = updatedPlayField, score = (score gs) + calcScore indexes}
+            updatedGameState = gs { playFieldState = updatedPlayField, score = (score gs) + calcScore indexes }
           in
           pause (foldr replaceWithBlankRow gs indexes) (Yampa.localTime >>^ (< 0.4)) (setBlockPosition rg updatedGameState)
         cont (Running, rg) =
@@ -280,10 +281,10 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
             block = currentBlock gs
             newShape = nextBlockShape gs
             (newNextBlock, rg') = randomBlock rg
-            gsWithHiddenBlock =
-              gs { currentBlock = block { blockShape = newShape, position = NoPosition }, nextBlockShape = newNextBlock }
+            updatedGameState =
+              gs { currentBlock = block { blockShape = newShape, position = NoPosition }, nextBlockShape = newNextBlock, speed = min 10.0 ((speed gs) + 0.1) }
           in
-          pause gs (Yampa.localTime >>^ (< 0.4)) (setBlockPosition rg' (foldr placeSquare gsWithHiddenBlock positions))
+          pause gs (Yampa.localTime >>^ (< 0.4)) (setBlockPosition rg' (foldr placeSquare updatedGameState positions))
         cont (BlockMove placedBlock, rg) =
           setBlockPosition rg (gs { currentBlock = placedBlock })
         cont (GameOver, rg) =
