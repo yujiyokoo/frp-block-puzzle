@@ -32,8 +32,7 @@ initialGameState shape =
   GameState False initialBlock initialPlayFieldState 0
 
 data ButtonPresses = ButtonPresses
-  { upArrow :: Bool
-  , downArrow :: Bool
+  { downArrow :: Bool
   , leftArrow :: Bool
   , rightArrow :: Bool
   , rotateL :: Bool
@@ -44,7 +43,7 @@ data ButtonPresses = ButtonPresses
   deriving (Show, Eq)
 
 noButtonPressed :: ButtonPresses
-noButtonPressed = ButtonPresses False False False False False False False False
+noButtonPressed = ButtonPresses False False False False False False False
 
 data GameScreen = GameScreen
   { playFieldLeft :: Int
@@ -114,16 +113,16 @@ input ref _ = do
 
 buttonPressesFrom :: [SDL.Event] -> ButtonPresses
 buttonPressesFrom events =
-  let u = any (checkKeyPress [ScancodeUp]) events
+  let
       d = any (checkKeyPress [ScancodeDown]) events
       l = any (checkKeyPress [ScancodeLeft]) events
       r = any (checkKeyPress [ScancodeRight]) events
       shift = any (checkKeyPress [ScancodeLShift, ScancodeRShift]) events
       ctrl = any (checkKeyPress [ScancodeLCtrl, ScancodeRCtrl]) events
-      sp = any (checkKeyPress [ScancodeSpace]) events
+      sp = any (checkKeyPress [ScancodeSpace, ScancodeUp]) events
       q = any (checkKeyPress [ScancodeEscape]) events
   in
-  ButtonPresses u d l r shift ctrl sp q
+  ButtonPresses d l r shift ctrl sp q
 
 checkKeyPress :: [Scancode] -> SDL.Event -> Bool
 checkKeyPress scanCodes event =
@@ -340,14 +339,25 @@ moveBlock (_, _, PlacedBlock { position = NoPosition }, _) = Yampa.NoEvent
 moveBlock (nextBlockShape, buttons, block@(PlacedBlock { position = (Position x y), blockShape = shape, orientation = orientation }), playFieldState) =
   let
     canMoveDown = canMoveTo (block { position = (Position x (y + 1)) }) playFieldState
+    hardDroppedPosition = calcDroppedPosition playFieldState (Position x y)
+    calcDroppedPosition field (Position x' y') =
+      let
+        movedBlock = block { position = (Position x' (y' + 1)) }
+      in
+      if canMoveTo movedBlock field then
+        calcDroppedPosition field (position movedBlock)
+      else
+        Position x' y'
   in
-  if (rotateL buttons) && (canRotateL block playFieldState) then
+  if hardDrop buttons && canMoveDown then
+    Yampa.Event $ BlockMove (block { position = hardDroppedPosition })
+  else if rotateL buttons && canRotateL block playFieldState then
     Yampa.Event $ BlockMove (block { orientation = spinLeft orientation })
-  else if (rotateR buttons) && (canRotateR block playFieldState) then
+  else if rotateR buttons && canRotateR block playFieldState then
     Yampa.Event $ BlockMove (block { orientation = spinRight orientation })
-  else if (leftArrow buttons) && (canMoveLeft block playFieldState) then
+  else if leftArrow buttons && canMoveLeft block playFieldState then
     Yampa.Event $ BlockMove (block { position = (Position (x - 1) y) })
-  else if (rightArrow buttons) && (canMoveRight block playFieldState) then
+  else if rightArrow buttons && canMoveRight block playFieldState then
     Yampa.Event $ BlockMove (block { position = (Position (x + 1) y) })
   else if downArrow buttons && canMoveDown then
     Yampa.Event $ BlockMove (block { position = (Position x (y + 1)) })
