@@ -86,6 +86,9 @@ type PlayFieldState = [[Bool]]
 initialPlayFieldState :: PlayFieldState
 initialPlayFieldState = replicate 22 blankRow
 
+gameOverFieldState :: PlayFieldState
+gameOverFieldState = (replicate 2 $ replicate 10 False) ++ (replicate 20 $ replicate 10 True)
+
 blankRow :: [Bool]
 blankRow = replicate 10 False
 
@@ -185,8 +188,19 @@ drawBlock PlacedBlock { blockShape = shape, orientation = orientation, position 
 drawSquare :: BlockPosition -> Renderer -> IO ()
 drawSquare NoPosition _ = return ()
 drawSquare (Position x y) renderer = do
+  let
+    leftX = x * 20 + 40
+    topY = (floor y) * 20
   rendererDrawColor renderer $= V4 192 32 32 255
-  fillRect renderer (Just (Rectangle (P (V2 (fromIntegral (x*20+40)) (fromIntegral ((floor y)*20)))) (V2 20 20)))
+  fillRect renderer (Just (Rectangle (P (V2 (fI leftX) (fI topY))) (V2 20 20)))
+  rendererDrawColor renderer $= V4 224 64 64 255
+  drawLine renderer (P (V2 (fI leftX) (fI topY))) (P (V2 (fI (leftX + 19)) (fI topY)))
+  drawLine renderer (P (V2 (fI leftX) (fI topY))) (P (V2 (fI leftX) (fI (topY + 19))))
+  rendererDrawColor renderer $= V4 128 32 32 255
+  drawLine renderer (P (V2 (fI (leftX + 1)) (fI (topY + 19)))) (P (V2 (fI (leftX + 19)) (fI (topY + 19))))
+  drawLine renderer (P (V2 (fI (leftX + 19)) (fI (topY + 1)))) (P (V2 (fI (leftX + 19)) (fI (topY + 19))))
+  rendererDrawColor renderer $= V4 224 96 96 255
+  drawPoint renderer (P (V2 (fI leftX) (fI topY)))
 
 
 drawPlayField :: PlayFieldState -> Renderer -> IO ()
@@ -223,6 +237,7 @@ data GameEvent
   | Deleting [Int]
   | Landing [BlockPosition]
   | BlockMove PlacedBlock
+  | GameOver
   deriving (Show, Eq)
 
 setY :: (BlockPosition, Float) -> BlockPosition
@@ -237,7 +252,7 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
               pos = position $ block
           dy <- integral -< (1.0 :: Float)
           newPosition <- arr setY -< (pos, dy)
-          gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs), blockShape block, pos)
+          gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs), block)
           landingEvent <- arr landBlock -< (block { position = newPosition }, (playFieldState gs))
           newGameState <- arr (buildGameState gs) -< block { position = newPosition }
           moveEvent <- arr moveBlock -< (buttonPresses, block { position = newPosition }, (playFieldState gs))
@@ -257,7 +272,7 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
             updatedPlayField = (replicate len blankRow) ++ (foldr removeRow playField indexes)
             updatedGameState = gs { playFieldState = updatedPlayField, score = (score gs) + calcScore indexes}
           in
-          pause (foldr replaceWithBlankRow gs indexes) (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg updatedGameState)
+          pause (foldr replaceWithBlankRow gs indexes) (Yampa.localTime >>^ (< 0.4)) (setBlockPosition rg updatedGameState)
         cont (Running, rg) =
           setBlockPosition rg gs
         cont (Landing positions, rg) =
@@ -268,12 +283,18 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
             gsWithHiddenBlock =
               gs { currentBlock = block { blockShape = newShape, position = NoPosition }, nextBlockShape = newNextBlock }
           in
-          pause gs (Yampa.localTime >>^ (< 1.0)) (setBlockPosition rg' (foldr placeSquare gsWithHiddenBlock positions))
+          pause gs (Yampa.localTime >>^ (< 0.4)) (setBlockPosition rg' (foldr placeSquare gsWithHiddenBlock positions))
         cont (BlockMove placedBlock, rg) =
           setBlockPosition rg (gs { currentBlock = placedBlock })
+        cont (GameOver, rg) =
+          let
+            (blockShape, rg') = randomBlock rg
+            (nextBlockShape, newRg) = randomBlock rg'
+          in
+          pause (gs { playFieldState = gameOverFieldState }) (Yampa.localTime >>^ (< 3)) (setBlockPosition newRg (initialGameState blockShape nextBlockShape))
 
-computeGameMode :: (ButtonPresses, PlayFieldState, BlockShape, BlockPosition) -> Yampa.Event GameEvent
-computeGameMode (bp, field, shape, position) =
+computeGameMode :: (ButtonPresses, PlayFieldState, PlacedBlock) -> Yampa.Event GameEvent
+computeGameMode (bp, field, block@(PlacedBlock { blockShape = shape, position = position })) =
   let
     fullRows =
       filter (\(idx, _) -> idx > 1 && idx < 22) $ filter isFullRow (indexed field)
@@ -285,6 +306,8 @@ computeGameMode (bp, field, shape, position) =
     Yampa.Event (Deleting (map fst fullRows))
   else if position == NoPosition then
     Yampa.Event (BlockMove (PlacedBlock shape Deg0 (Position 3 2)))
+  else if not (canMoveTo block field) then
+    Yampa.Event GameOver
   else
     Yampa.NoEvent
 
@@ -499,28 +522,28 @@ get4x4 O _ =
   ]
 
 get4x4 I Deg0 =
+  [ [False, False, False, False]
+  , [True, True, True, True]
+  , [False, False, False, False]
+  , [False, False, False, False]
+  ]
+get4x4 I Deg90 =
   [ [False, True, False, False]
   , [False, True, False, False]
   , [False, True, False, False]
   , [False, True, False, False]
   ]
-get4x4 I Deg90 =
+get4x4 I Deg180 =
   [ [False, False, False, False]
   , [False, False, False, False]
   , [True, True, True, True]
   , [False, False, False, False]
   ]
-get4x4 I Deg180 =
+get4x4 I Deg270 =
   [ [False, False, True, False]
   , [False, False, True, False]
   , [False, False, True, False]
   , [False, False, True, False]
-  ]
-get4x4 I Deg270 =
-  [ [False, False, False, False]
-  , [True, True, True, True]
-  , [False, False, False, False]
-  , [False, False, False, False]
   ]
 
 get4x4 J Deg0 =
