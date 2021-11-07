@@ -81,17 +81,43 @@ data BlockPosition
   | NoPosition
   deriving (Show, Eq)
 
-type PlayFieldState = [[Bool]]
+data BlockColour
+  = Red
+  | Cyan
+  | Blue
+  | Orange
+  | Yellow
+  | Green
+  | Purple
+  | Grey -- game over only
+  | NoBlock
+  deriving (Show, Eq)
+
+type PlayFieldState = [[BlockColour]]
+type PlayFieldBoolMap = [[Bool]]
+
+colourOf :: PlacedBlock -> BlockColour
+colourOf PlacedBlock { blockShape = I } = Cyan
+colourOf PlacedBlock { blockShape = J } = Blue
+colourOf PlacedBlock { blockShape = L } = Orange
+colourOf PlacedBlock { blockShape = O } = Yellow
+colourOf PlacedBlock { blockShape = S } = Green
+colourOf PlacedBlock { blockShape = T } = Purple
+colourOf PlacedBlock { blockShape = Z } = Red
 
 -- play field is 20 x 10. There are extra rows at the top (think row -1 and -2)
 initialPlayFieldState :: PlayFieldState
 initialPlayFieldState = replicate 22 blankRow
 
 gameOverFieldState :: PlayFieldState
-gameOverFieldState = (replicate 2 $ replicate 10 False) ++ (replicate 20 $ replicate 10 True)
+gameOverFieldState = (replicate 2 $ replicate 10 NoBlock) ++ (replicate 20 $ replicate 10 Grey)
 
-blankRow :: [Bool]
-blankRow = replicate 10 False
+blankRow :: [BlockColour]
+blankRow = replicate 10 NoBlock
+
+toBoolMap :: PlayFieldState -> PlayFieldBoolMap
+toBoolMap playField =
+  map (\row -> map (\cell -> cell /= NoBlock) row) playField
 
 runGame :: RandomGen rg => rg -> IO ()
 runGame rg = do
@@ -148,7 +174,7 @@ scancodeOf ked =
 
 output :: Renderer -> Bool -> GameState -> IO Bool
 output renderer _ gs = do
-  rendererDrawColor renderer $= V4 32 32 32 255
+  rendererDrawColor renderer $= V4 8 8 8 255
   clear renderer
   drawPlayField (playFieldState gs) renderer
   drawBlock (currentBlock gs) renderer
@@ -168,7 +194,7 @@ renderScore score renderer =
     start = (14 - len)
   in
   do
-    rendererDrawColor renderer $= V4 192 32 32 255
+    rendererDrawColor renderer $= V4 224 224 224 255
     sequence_ $
       map (drawDigit start renderer) (indexed digits)
 
@@ -178,29 +204,69 @@ renderNextBlock shape renderer =
 
 drawBlock :: PlacedBlock -> Renderer -> IO ()
 drawBlock PlacedBlock { position = NoPosition } _ = return ()
-drawBlock PlacedBlock { blockShape = shape, orientation = orientation, position = Position x y } renderer =
+drawBlock block@(PlacedBlock { blockShape = shape, orientation = orientation, position = Position x y }) renderer =
   let
     blockMap = get4x4 shape orientation
     renderRow position (idy, row) = sequence $ map (renderCell (fromIntegral idy)) (indexed row)
-    renderCell idy (idx, blockExists) = when blockExists (drawSquare (Position (x + idx) (y + idy)) renderer)
+    renderCell idy (idx, blockExists) = when blockExists (drawSquare (colourOf block) (Position (x + idx) (y + idy)) renderer)
   in
   sequence_ $ map (renderRow position) (indexed  blockMap)
 
-drawSquare :: BlockPosition -> Renderer -> IO ()
-drawSquare NoPosition _ = return ()
-drawSquare (Position x y) renderer = do
+normalColour :: Num a => BlockColour -> V4 a
+normalColour Red = V4 192 32 32 255
+normalColour Cyan = V4 32 160 192 255
+normalColour Blue = V4 32 32 192 255
+normalColour Orange = V4 192 128 32 255
+normalColour Yellow = V4 192 192 32 255
+normalColour Green = V4 32 192 32 255
+normalColour Purple = V4 128 32 128 255
+normalColour Grey = V4 128 128 128 255
+
+lightColour :: Num a => BlockColour -> V4 a
+lightColour Red = V4 224 64 64 255
+lightColour Cyan = V4 128 192 224 255
+lightColour Blue = V4 64 64 224 255
+lightColour Orange = V4 224 160 64 255
+lightColour Yellow = V4 224 224 96 255
+lightColour Green = V4 64 224 64 255
+lightColour Purple = V4 160 64 160 255
+lightColour Grey = V4 160 160 160 255
+
+lightestColour :: Num a => BlockColour -> V4 a
+lightestColour Red = V4 224 96 96 255
+lightestColour Cyan = V4 192 224 255 255
+lightestColour Blue = V4 96 96 224 255
+lightestColour Orange = V4 224 192 96 255
+lightestColour Yellow = V4 224 224 128 255
+lightestColour Green = V4 96 224 96 255
+lightestColour Purple = V4 224 96 224 255
+lightestColour Grey = V4 224 224 224 255
+
+darkColour :: Num a => BlockColour -> V4 a
+darkColour Red = V4 128 32 32 255
+darkColour Cyan = V4 32 64 128 255
+darkColour Blue = V4 32 32 128 255
+darkColour Orange = V4 128 64 32 255
+darkColour Yellow = V4 128 128 32 255
+darkColour Green = V4 32 128 32 255
+darkColour Purple = V4 64 32 64 255
+darkColour Grey = V4 32 32 32 255
+
+drawSquare :: BlockColour ->  BlockPosition -> Renderer -> IO ()
+drawSquare _ NoPosition _ = return ()
+drawSquare colour (Position x y) renderer = do
   let
     leftX = x * 20 + 40
     topY = (floor y) * 20
-  rendererDrawColor renderer $= V4 192 32 32 255
+  rendererDrawColor renderer $= normalColour colour
   fillRect renderer (Just (Rectangle (P (V2 (fI leftX) (fI topY))) (V2 20 20)))
-  rendererDrawColor renderer $= V4 224 64 64 255
+  rendererDrawColor renderer $= lightColour colour
   drawLine renderer (P (V2 (fI leftX) (fI topY))) (P (V2 (fI (leftX + 19)) (fI topY)))
   drawLine renderer (P (V2 (fI leftX) (fI topY))) (P (V2 (fI leftX) (fI (topY + 19))))
-  rendererDrawColor renderer $= V4 128 32 32 255
+  rendererDrawColor renderer $= darkColour colour
   drawLine renderer (P (V2 (fI (leftX + 1)) (fI (topY + 19)))) (P (V2 (fI (leftX + 19)) (fI (topY + 19))))
   drawLine renderer (P (V2 (fI (leftX + 19)) (fI (topY + 1)))) (P (V2 (fI (leftX + 19)) (fI (topY + 19))))
-  rendererDrawColor renderer $= V4 224 96 96 255
+  rendererDrawColor renderer $= lightestColour colour
   drawPoint renderer (P (V2 (fI leftX) (fI topY)))
 
 
@@ -212,7 +278,7 @@ drawPlayField playField renderer = do
         sequence $
           map
             (\(idx, cell) ->
-              when cell (drawSquare (Position idx (fromIntegral idy)) renderer)
+              when (cell /= NoBlock) (drawSquare cell (Position idx (fromIntegral idy)) renderer)
             )
             (indexed row)
       )
@@ -221,7 +287,7 @@ drawPlayField playField renderer = do
 drawBorders :: Renderer -> IO ()
 drawBorders renderer = do
   let playFieldRect = Rectangle (P (V2 39 39)) (V2 201 401)
-  rendererDrawColor renderer $= V4 192 32 32 255
+  rendererDrawColor renderer $= V4 224 224 224 255
   drawRect renderer (Just playFieldRect)
 
 process :: RandomGen rg => rg -> GameState -> SF [SDL.Event] GameState
@@ -253,8 +319,8 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
               pos = position $ block
           dy <- integral -< speed gs
           newPosition <- arr setY -< (pos, dy)
-          gameModeEvent <- arr computeGameMode -< (buttonPresses, (playFieldState gs), block)
-          landingEvent <- arr landBlock -< (block { position = newPosition }, (playFieldState gs))
+          gameModeEvent <- arr computeGameMode -< (buttonPresses, (toBoolMap $ playFieldState gs), block)
+          landingEvent <- arr landBlock -< (block { position = newPosition }, (toBoolMap $ playFieldState gs))
           newGameState <- arr (buildGameState gs) -< block { position = newPosition }
           moveEvent <- arr moveBlock -< (buttonPresses, block { position = newPosition }, (playFieldState gs))
           returnA -< (newGameState, (gameModeEvent `lMerge` landingEvent `lMerge` moveEvent) `attach` rg)
@@ -284,17 +350,18 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
             updatedGameState =
               gs { currentBlock = block { blockShape = newShape, position = NoPosition }, nextBlockShape = newNextBlock, speed = min 10.0 ((speed gs) + 0.1) }
           in
-          pause gs (Yampa.localTime >>^ (< 0.4)) (setBlockPosition rg' (foldr placeSquare updatedGameState positions))
+          pause gs (Yampa.localTime >>^ (< 0.4)) (setBlockPosition rg' (foldr (placeSquare (colourOf block)) updatedGameState positions))
         cont (BlockMove placedBlock, rg) =
           setBlockPosition rg (gs { currentBlock = placedBlock })
         cont (GameOver, rg) =
           let
             (blockShape, rg') = randomBlock rg
             (nextBlockShape, newRg) = randomBlock rg'
+            hiddenBlock = (currentBlock gs) { position = NoPosition }
           in
-          pause (gs { playFieldState = gameOverFieldState }) (Yampa.localTime >>^ (< 3)) (setBlockPosition newRg (initialGameState blockShape nextBlockShape))
+          pause (gs { currentBlock = hiddenBlock, playFieldState = gameOverFieldState }) (Yampa.localTime >>^ (< 3)) (setBlockPosition newRg (initialGameState blockShape nextBlockShape))
 
-computeGameMode :: (ButtonPresses, PlayFieldState, PlacedBlock) -> Yampa.Event GameEvent
+computeGameMode :: (ButtonPresses, PlayFieldBoolMap, PlacedBlock) -> Yampa.Event GameEvent
 computeGameMode (bp, field, block@(PlacedBlock { blockShape = shape, position = position })) =
   let
     fullRows =
@@ -312,16 +379,16 @@ computeGameMode (bp, field, block@(PlacedBlock { blockShape = shape, position = 
   else
     Yampa.NoEvent
 
-placeSquare :: BlockPosition -> GameState -> GameState
-placeSquare NoPosition gs = gs
-placeSquare (Position x y) gs =
+placeSquare :: BlockColour -> BlockPosition -> GameState -> GameState
+placeSquare _ NoPosition gs = gs
+placeSquare colour (Position x y) gs =
   let
     intY = floor y
     playField = playFieldState gs
     -- TODO: introduce lens for this kind of stuff?
     row = fromMaybe [] $ Safe.head $ slice intY intY playField
     (beforeX, xAndAfter) = splitAt x row
-    newRow = beforeX ++ [True] ++ (fromMaybe [] $ Safe.tail xAndAfter)
+    newRow = beforeX ++ [colour] ++ (fromMaybe [] $ Safe.tail xAndAfter)
     (beforeY, yAndAfter) = splitAt intY playField
     newPlayField = beforeY ++ [newRow] ++ (fromMaybe [] $ Safe.tail yAndAfter)
   in
@@ -354,11 +421,11 @@ slice from to xs =
   else
     take (to + 1) xs
 
-landBlock :: (PlacedBlock, PlayFieldState) -> Yampa.Event GameEvent
-landBlock (PlacedBlock { position = NoPosition }, playFieldState) = Yampa.NoEvent
-landBlock (block@(PlacedBlock { position = Position x y }), playFieldState) =
+landBlock :: (PlacedBlock, PlayFieldBoolMap) -> Yampa.Event GameEvent
+landBlock (PlacedBlock { position = NoPosition }, playFieldBoolMap) = Yampa.NoEvent
+landBlock (block@(PlacedBlock { position = Position x y }), playFieldBoolMap) =
   let
-    blockStopped = not $ canMoveTo block playFieldState
+    blockStopped = not $ canMoveTo block playFieldBoolMap
     landingBlocks = blocksToKeep blockStopped block
   in
   if blockStopped then
@@ -370,8 +437,9 @@ moveBlock :: (ButtonPresses, PlacedBlock, PlayFieldState) -> Yampa.Event GameEve
 moveBlock (_, PlacedBlock { position = NoPosition }, _) = Yampa.NoEvent
 moveBlock (buttons, block@(PlacedBlock { position = (Position x y), blockShape = shape, orientation = orientation }), playFieldState) =
   let
-    canMoveDown = canMoveTo (block { position = (Position x (y + 1)) }) playFieldState
-    hardDroppedPosition = calcDroppedPosition playFieldState (Position x y)
+    playFieldBoolMap = (toBoolMap playFieldState)
+    canMoveDown = canMoveTo (block { position = (Position x (y + 1)) }) playFieldBoolMap
+    hardDroppedPosition = calcDroppedPosition playFieldBoolMap (Position x y)
     calcDroppedPosition field (Position x' y') =
       let
         movedBlock = block { position = (Position x' (y' + 1)) }
@@ -383,13 +451,13 @@ moveBlock (buttons, block@(PlacedBlock { position = (Position x y), blockShape =
   in
   if hardDrop buttons && canMoveDown then
     Yampa.Event $ BlockMove (block { position = hardDroppedPosition })
-  else if rotateL buttons && canRotateL block playFieldState then
+  else if rotateL buttons && canRotateL block playFieldBoolMap then
     Yampa.Event $ BlockMove (block { orientation = spinLeft orientation })
-  else if rotateR buttons && canRotateR block playFieldState then
+  else if rotateR buttons && canRotateR block playFieldBoolMap then
     Yampa.Event $ BlockMove (block { orientation = spinRight orientation })
-  else if leftArrow buttons && canMoveLeft block playFieldState then
+  else if leftArrow buttons && canMoveLeft block playFieldBoolMap then
     Yampa.Event $ BlockMove (block { position = (Position (x - 1) y) })
-  else if rightArrow buttons && canMoveRight block playFieldState then
+  else if rightArrow buttons && canMoveRight block playFieldBoolMap then
     Yampa.Event $ BlockMove (block { position = (Position (x + 1) y) })
   else if downArrow buttons && canMoveDown then
     Yampa.Event $ BlockMove (block { position = (Position x (y + 1)) })
@@ -431,12 +499,12 @@ blocksToKeep blockStopped block@(PlacedBlock { position = Position x overlapping
   else
     []
 
-canMoveTo :: PlacedBlock -> PlayFieldState -> Bool
-canMoveTo (PlacedBlock { position = NoPosition }) playFieldState = False
-canMoveTo (block@(PlacedBlock { position = Position x y, blockShape = shape, orientation = orientation })) playFieldState =
+canMoveTo :: PlacedBlock -> PlayFieldBoolMap -> Bool
+canMoveTo (PlacedBlock { position = NoPosition }) playFieldBoolMap = False
+canMoveTo (block@(PlacedBlock { position = Position x y, blockShape = shape, orientation = orientation })) playFieldBoolMap =
   let
     intY = floor y
-    rows = slice intY (intY + 3) (playFieldState ++ [(replicate 10 True)]) -- adding the floor (10 Trues)
+    rows = slice intY (intY + 3) (playFieldBoolMap ++ [(replicate 10 True)]) -- adding the floor (10 Trues)
     -- Trues are walls, Falses needed to allow 'I' block to go to the edges
     augmentedRows = map (\row -> [False, True] ++ row ++ [True, False]) rows
     cells = concatMap (slice (x + 2) (x + 5)) augmentedRows
@@ -444,23 +512,23 @@ canMoveTo (block@(PlacedBlock { position = Position x y, blockShape = shape, ori
   in
   not $ any (\(l, r) -> l && r) (zip cells blockCells)
 
-canMoveLeft :: PlacedBlock -> PlayFieldState -> Bool
-canMoveLeft (PlacedBlock { position = NoPosition }) playFieldState = False
-canMoveLeft (block@(PlacedBlock { position = Position x y })) playFieldState =
-  canMoveTo (block { position = Position (x - 1) y }) playFieldState
+canMoveLeft :: PlacedBlock -> PlayFieldBoolMap -> Bool
+canMoveLeft (PlacedBlock { position = NoPosition }) playFieldBoolMap = False
+canMoveLeft (block@(PlacedBlock { position = Position x y })) playFieldBoolMap =
+  canMoveTo (block { position = Position (x - 1) y }) playFieldBoolMap
 
-canMoveRight :: PlacedBlock -> PlayFieldState -> Bool
-canMoveRight (PlacedBlock { position = NoPosition }) playFieldState = False
-canMoveRight (block@(PlacedBlock { position = Position x y })) playFieldState =
-  canMoveTo (block { position = Position (x + 1) y }) playFieldState
+canMoveRight :: PlacedBlock -> PlayFieldBoolMap -> Bool
+canMoveRight (PlacedBlock { position = NoPosition }) playFieldBoolMap = False
+canMoveRight (block@(PlacedBlock { position = Position x y })) playFieldBoolMap =
+  canMoveTo (block { position = Position (x + 1) y }) playFieldBoolMap
 
-canRotateL :: PlacedBlock -> PlayFieldState -> Bool
-canRotateL (block@(PlacedBlock { orientation = orientation })) playFieldState =
-  canMoveTo (block { orientation = spinLeft orientation }) playFieldState
+canRotateL :: PlacedBlock -> PlayFieldBoolMap -> Bool
+canRotateL (block@(PlacedBlock { orientation = orientation })) playFieldBoolMap =
+  canMoveTo (block { orientation = spinLeft orientation }) playFieldBoolMap
 
-canRotateR :: PlacedBlock -> PlayFieldState -> Bool
-canRotateR (block@(PlacedBlock { orientation = orientation })) playFieldState =
-  canMoveTo (block { orientation = spinRight orientation }) playFieldState
+canRotateR :: PlacedBlock -> PlayFieldBoolMap -> Bool
+canRotateR (block@(PlacedBlock { orientation = orientation })) playFieldBoolMap =
+  canMoveTo (block { orientation = spinRight orientation }) playFieldBoolMap
 
 
 spinLeft :: BlockOrientation -> BlockOrientation
