@@ -29,7 +29,7 @@ data GameState = GameState
 initialGameState :: BlockShape -> BlockShape -> GameState
 initialGameState shape nextShape =
   let
-    initialBlock = PlacedBlock shape Deg0 (Position 3 2)
+    initialBlock = PlacedBlock shape Deg0 (Position 3 2) False
   in
   GameState False initialBlock nextShape initialPlayFieldState 0 1.0
 
@@ -56,6 +56,7 @@ data PlacedBlock = PlacedBlock
   { blockShape :: BlockShape
   , orientation :: BlockOrientation
   , position :: BlockPosition
+  , flashing :: Bool
   }
   deriving (Show, Eq)
 
@@ -89,6 +90,7 @@ data BlockColour
   | Yellow
   | Green
   | Purple
+  | White
   | Grey -- game over only
   | NoBlock
   deriving (Show, Eq)
@@ -97,6 +99,7 @@ type PlayFieldState = [[BlockColour]]
 type PlayFieldBoolMap = [[Bool]]
 
 colourOf :: PlacedBlock -> BlockColour
+colourOf PlacedBlock { flashing = True } = White
 colourOf PlacedBlock { blockShape = I } = Cyan
 colourOf PlacedBlock { blockShape = J } = Blue
 colourOf PlacedBlock { blockShape = L } = Orange
@@ -200,7 +203,7 @@ renderScore score renderer =
 
 renderNextBlock :: BlockShape -> Renderer -> IO ()
 renderNextBlock shape renderer =
-  drawBlock (PlacedBlock { blockShape = shape, orientation = Deg0, position = Position 14 4 }) renderer
+  drawBlock (PlacedBlock { blockShape = shape, orientation = Deg0, position = Position 14 4, flashing = False }) renderer
 
 drawBlock :: PlacedBlock -> Renderer -> IO ()
 drawBlock PlacedBlock { position = NoPosition } _ = return ()
@@ -221,6 +224,7 @@ normalColour Yellow = V4 192 192 32 255
 normalColour Green = V4 32 192 32 255
 normalColour Purple = V4 128 32 128 255
 normalColour Grey = V4 128 128 128 255
+normalColour White = V4 192 192 192 255
 
 lightColour :: Num a => BlockColour -> V4 a
 lightColour Red = V4 224 64 64 255
@@ -231,6 +235,7 @@ lightColour Yellow = V4 224 224 96 255
 lightColour Green = V4 64 224 64 255
 lightColour Purple = V4 160 64 160 255
 lightColour Grey = V4 160 160 160 255
+lightColour White = V4 224 224 224 255
 
 lightestColour :: Num a => BlockColour -> V4 a
 lightestColour Red = V4 224 96 96 255
@@ -241,6 +246,7 @@ lightestColour Yellow = V4 224 224 128 255
 lightestColour Green = V4 96 224 96 255
 lightestColour Purple = V4 224 96 224 255
 lightestColour Grey = V4 224 224 224 255
+lightestColour White = V4 255 255 255 255
 
 darkColour :: Num a => BlockColour -> V4 a
 darkColour Red = V4 128 32 32 255
@@ -251,6 +257,7 @@ darkColour Yellow = V4 128 128 32 255
 darkColour Green = V4 32 128 32 255
 darkColour Purple = V4 64 32 64 255
 darkColour Grey = V4 32 32 32 255
+darkColour White = V4 160 160 160 255
 
 drawSquare :: BlockColour ->  BlockPosition -> Renderer -> IO ()
 drawSquare _ NoPosition _ = return ()
@@ -349,8 +356,10 @@ setBlockPosition rg gs = switch (sf >>> second notYet) cont
             (newNextBlock, rg') = randomBlock rg
             updatedGameState =
               gs { currentBlock = block { blockShape = newShape, position = NoPosition }, nextBlockShape = newNextBlock, speed = min 10.0 ((speed gs) + 0.1) }
+            flashingGs =
+              gs { currentBlock = block { flashing = True } }
           in
-          pause gs (Yampa.localTime >>^ (< 0.4)) (setBlockPosition rg' (foldr (placeSquare (colourOf block)) updatedGameState positions))
+          pause flashingGs (Yampa.localTime >>^ (< 0.4)) (setBlockPosition rg' (foldr (placeSquare (colourOf block)) updatedGameState positions))
         cont (BlockMove placedBlock, rg) =
           setBlockPosition rg (gs { currentBlock = placedBlock })
         cont (GameOver, rg) =
@@ -373,7 +382,7 @@ computeGameMode (bp, field, block@(PlacedBlock { blockShape = shape, position = 
   else if fullRows /= [] then
     Yampa.Event (Deleting (map fst fullRows))
   else if position == NoPosition then
-    Yampa.Event (BlockMove (PlacedBlock shape Deg0 (Position 3 2)))
+    Yampa.Event (BlockMove (PlacedBlock shape Deg0 (Position 3 2) False))
   else if not (canMoveTo block field) then
     Yampa.Event GameOver
   else
